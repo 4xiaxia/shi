@@ -5,7 +5,8 @@
 ## 范围
 
 - 包含：`Web / Feishu / Scheduler / 记忆链 / 4 固定角色槽位`
-- 排除：`node_modules / dist / clean-room / .uclaw / release caches / Room 实验线`
+- 排除：`node_modules / dist / .uclaw / release caches / Room 实验线`
+- 特例：保留 `clean-room/spine/modules`，因为当前现役 web / feishu 主链仍直接依赖它
 
 ## 当前口径
 

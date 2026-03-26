@@ -19,6 +19,9 @@ delivery-mainline-1.0-clean
 ├─ LICENSE
 ├─ patches/
 ├─ public/
+├─ clean-room/
+│  └─ spine/
+│     └─ modules/
 ├─ scripts/
 │  ├─ dev-runner.mjs
 │  ├─ sync-app-config-env.ts

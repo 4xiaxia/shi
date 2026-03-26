@@ -1,0 +1,11 @@
+{
+  "host": "127.0.0.1",
+  "backendPort": 3001,
+  "frontendPort": 5176,
+  "hmrPort": 5177,
+  "startedAt": "2026-03-26T17:27:16.165Z",
+  "startupOrder": [
+    "backend",
+    "frontend"
+  ]
+}
