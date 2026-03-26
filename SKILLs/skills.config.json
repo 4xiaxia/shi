@@ -9,7 +9,6 @@
     "copywriting": { "order": 50, "enabled": true },
     "daily-memory-extraction": { "order": 60, "enabled": true },
     "data-analysis": { "order": 70, "enabled": true },
-    "feishu-openclaw-plugin": { "order": 80, "enabled": true },
     "ima-note": { "order": 90, "enabled": true },
     "nano-banana-pro": { "order": 100, "enabled": true },
     "obsidian": { "order": 110, "enabled": true },
@@ -18,7 +17,6 @@
     "using-superpowers": { "order": 140, "enabled": true },
     "web-search": { "order": 150, "enabled": true },
     "writing-skills": { "order": 160, "enabled": true },
-    "xhs-mcp": { "order": 170, "enabled": true },
     "xhs-render": { "order": 180, "enabled": true },
     "xlsx": { "order": 190, "enabled": true }
   }

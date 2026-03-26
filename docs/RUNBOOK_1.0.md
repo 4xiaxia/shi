@@ -5,6 +5,20 @@
 - Node.js: `>=24 <25`
 - 首次运行先复制 `.env.example -> .env`
 
+## 自动化部署基线
+
+- Root Directory: `delivery-mainline-1.0-clean`
+- Build Command: `npm install && npm run build`
+- Start Command: `npm start`
+- Health Check Path: `/health`
+- 生产模式下由同一个 Node 服务同时提供 API、WebSocket 和静态前端
+
+## 为什么 `npm start` 要这样配
+
+- 默认启动脚本带 `--no-open`，避免 headless 环境尝试拉起浏览器直接报错
+- 默认启动脚本带 `--host 0.0.0.0`，避免只绑定本机回环地址导致平台探活失败
+- 默认端口仍是 `3001`，平台如果注入 `PORT` 会优先使用平台端口
+
 ## 开发
 
 ```bash
@@ -23,6 +37,85 @@ npm run dev:web
 npm run build
 npm run start
 ```
+
+本地手动验证生产包：
+
+```bash
+npm run start:local
+```
+
+## 最小环境变量
+
+```dotenv
+NODE_ENV=production
+PORT=3001
+CORS_ORIGIN=*
+UCLAW_API_BASE_URL=
+UCLAW_API_KEY=
+UCLAW_DEFAULT_MODEL=
+```
+
+说明：
+
+- API 三件套也可以首启后在 UI 设置页填写，不强制写入 `.env`
+- 保留旧变量别名兼容：`LOBSTERAI_*`
+
+推荐生产模板：
+
+```dotenv
+NODE_ENV=production
+PORT=3001
+CORS_ORIGIN=*
+UCLAW_DATA_PATH=.uclaw
+UCLAW_API_BASE_URL=https://api.openai.com/v1
+UCLAW_API_KEY=your_api_key
+UCLAW_DEFAULT_MODEL=gpt-5.4
+```
+
+变量解释：
+
+- `NODE_ENV`：生产环境写 `production`
+- `PORT`：平台通常会覆盖注入，不需要改成别的固定值
+- `CORS_ORIGIN`：单体部署可先 `*`，前后端分离时改成明确域名
+- `UCLAW_DATA_PATH`：推荐写 `.uclaw`；不要写到项目根目录外
+- `UCLAW_API_BASE_URL`：模型 API 根地址
+- `UCLAW_API_KEY`：模型 API 密钥
+- `UCLAW_DEFAULT_MODEL`：默认模型名
+
+一般不要手填：
+
+- `UCLAW_APP_ROOT`
+- `UCLAW_WORKSPACE`
+
+因为服务启动时会自动推断项目根目录；只有非常规启动方式才需要覆盖。
+
+## 数据目录规则
+
+- 默认数据目录：`./.uclaw/web`
+- 可通过 `UCLAW_DATA_PATH` 或 `--data-dir` 指定
+- 该路径必须在项目根目录内部；如果指到项目外部，运行时会自动忽略并回退默认目录
+- 自动化部署若需要持久化，请把磁盘挂载到项目目录里，再把 `UCLAW_DATA_PATH` 设成该挂载目录
+
+示例：
+
+```dotenv
+UCLAW_DATA_PATH=.uclaw
+```
+
+或：
+
+```dotenv
+UCLAW_DATA_PATH=/opt/render/project/src/.uclaw
+```
+
+## 常见部署检查项
+
+- `npm run build` 后必须存在 `server/dist/server/src/cli.js`
+- 生产环境不需要执行 `npm run dev:web`
+- 健康检查请打到 `/health`，不要打首页
+- 如果平台要求监听公网，必须使用 `npm start` 或等效的 `--host 0.0.0.0`
+- 如果探活失败，先检查平台是否真的把 `PORT` 注入到 Node 进程
+- 如果数据没有落盘，先检查 `UCLAW_DATA_PATH` 是否被设到了项目目录之外
 
 ## 飞书一期
 

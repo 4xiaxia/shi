@@ -149,19 +149,50 @@ The WebSocket server at `/ws` supports real-time events:
 
 ```bash
 # Development
-npm run dev
+npm run server:dev
 
 # Production
 npm run build
 npm start
 ```
 
+Deployment-safe production start defaults to:
+
+- `--no-open`
+- `--host 0.0.0.0`
+
+Local manual production check:
+
+```bash
+npm run start:local
+```
+
+Direct CLI example:
+
+```bash
+node server/dist/server/src/cli.js --no-open --host 0.0.0.0 --port 3001 --workspace .
+```
+
+Health check:
+
+```text
+GET /health
+```
+
 ## Environment Variables
 
-- `PORT` - HTTP server port (default: 3000)
-- `NODE_ENV` - Environment (development/production)
-- `LO BSTERAI_DATA_PATH` - Custom data directory path
-- `CORS_ORIGIN` - CORS allowed origin (default: *)
+- `PORT` - HTTP server port (default: `3001`)
+- `NODE_ENV` - Environment (`development` / `production`)
+- `CORS_ORIGIN` - CORS allowed origin (default: `*`)
+- `UCLAW_DATA_PATH` / `LOBSTERAI_DATA_PATH` - Runtime data root override
+- `UCLAW_WORKSPACE` / `LOBSTERAI_WORKSPACE` - Project workspace root override
+- `UCLAW_APP_ROOT` / `LOBSTERAI_APP_ROOT` - App root override
+
+Notes:
+
+- Default runtime user data path is `./.uclaw/web`
+- `UCLAW_DATA_PATH` and `--data-dir` must point inside the project root; external paths are ignored for runtime safety
+- In production the static frontend is served by the same Node process from `server/public`
 
 ## Integration with Existing Code
 
