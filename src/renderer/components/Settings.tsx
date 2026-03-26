@@ -1,0 +1,2705 @@
+import { showGlobalToast } from '../services/toast';
+import DataBackup from './DataBackup';
+/**
+ * {标记} 功能: 应用设置页面
+ * {标记} 二开改造: 4身份Agent配置 + claW特价API iframe + 记忆管理配置
+ * {标记} 关键块: #66-184 (claW iframe), #2700-2764 (Agent角色UI), #1570-1653 (保存逻辑)
+ * {标记} 集成: 与agentRoleConfig.ts/memoryManagementPreset.ts/embeddedBrowser.ts紧密耦合
+ * {标记} 状态: Agent配置UI完整✅ / 跨渠道一体化缺失❌
+ */
+
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { configService } from '../services/config';
+import { apiService } from '../services/api';
+import type { AppUpdateInfo } from '../services/appUpdate';
+import { themeService } from '../services/theme';
+// i18n removed — hardcoded Chinese
+import { coworkService } from '../services/cowork';
+import { localStore } from '../services/store';
+import ErrorMessage from './ErrorMessage';
+import { XMarkIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, EnvelopeIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
+import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroicons/react/20/solid';
+import PlusCircleIcon from './icons/PlusCircleIcon';
+import IMSettings from './im/IMSettings';
+import NativeCapabilitiesSettings from './settings/NativeCapabilitiesSettings';
+import EmbeddedIframeView from './EmbeddedIframeView';
+import { useDispatch, useSelector } from 'react-redux';
+import { setAvailableModels } from '../store/slices/modelSlice';
+import { RootState } from '../store';
+import ThemedSelect from './ui/ThemedSelect';
+import {
+  AGENT_ROLE_LABELS,
+  AGENT_ROLE_ORDER,
+  CONFIRMED_DESIGNER_IMAGE_MODEL_HINTS,
+  buildAvailableModelsFromAgentRoles,
+  buildProviderConfigsFromAgentRoles,
+  createDefaultAgentRoles,
+  getDesignerImageApiTypeOptions,
+  isAgentRoleProviderKey,
+  normalizeAgentRolesForSave,
+  pickNextApiKey,
+  resolveAgentRolesFromConfig,
+  type AgentRoleConfigMap,
+  type AgentRoleKey,
+} from '../../shared/agentRoleConfig';
+import {
+  buildConversationFileCacheUpdate,
+  resolveConversationFileCacheConfig,
+} from '../../shared/conversationFileCacheConfig';
+import type {
+  CoworkUserMemoryEntry,
+  CoworkMemoryStats,
+} from '../types/cowork';
+import { defaultConfig, type AppConfig, getVisibleProviders } from '../config';
+import {
+  normalizeNativeCapabilitiesConfig,
+  type NativeCapabilitiesConfig,
+} from '../../shared/nativeCapabilities/config';
+import {
+  OpenAIIcon,
+  DeepSeekIcon,
+  GeminiIcon,
+  AnthropicIcon,
+  MoonshotIcon,
+  ZhipuIcon,
+  MiniMaxIcon,
+  YouDaoZhiYunIcon,
+  QwenIcon,
+  XiaomiIcon,
+  StepfunIcon,
+  VolcengineIcon,
+  OpenRouterIcon,
+  OllamaIcon,
+  CustomProviderIcon,
+} from './icons/providers';
+import { hasAutoLaunch } from '../utils/platform';
+// Settings helpers and constants
+import {
+  getEffectiveApiFormat,
+  buildOpenAICompatibleChatCompletionsUrl,
+  CONNECTIVITY_TEST_TOKEN_BUDGET,
+} from './settings/settingsHelpers';
+import {
+  resolveBaseUrl,
+} from './settings/settingsConstants';
+
+// 特价 API 套餐卡片 — 珍珠白风格
+const ClawApiIframeView: React.FC = () => {
+  const bigPlans = [
+    {
+      name: 'GPT 5.4',
+      badge: '推荐',
+      desc: '工具调用 · 全能型号',
+      price: '9元',
+      unit: '/M token',
+      btnText: '白菜价购买',
+      href: 'https://api.ujiapp.com/pricing?provider=OpenAI',
+      iconColor: 'text-violet-500',
+      badgeBg: 'bg-violet-500',
+    },
+    {
+      name: 'Nano Banana 2',
+      badge: '生图',
+      desc: '快速生图 · 搭配模板',
+      price: '0.2元',
+      unit: '/张',
+      btnText: '保送毕业',
+      href: 'https://api.ujiapp.com/pricing?provider=Google',
+      iconColor: 'text-amber-500',
+      badgeBg: 'bg-amber-500',
+    },
+  ];
+
+  const smallPlans = [
+    {
+      name: 'GPT 5 Mini',
+      price: '2元',
+      unit: '/百万token',
+      href: 'https://api.ujiapp.com/pricing?keyword=mini&group=default',
+      dot: 'bg-rose-400',
+      btnText: '特价',
+    },
+    {
+      name: 'Haiku 4-5',
+      price: '5元',
+      unit: '/百万token',
+      href: 'https://api.ujiapp.com/pricing?keyword=haiku&provider=Anthropic',
+      dot: 'bg-amber-400',
+      btnText: '特价',
+    },
+    {
+      name: 'Gemini 3 Flash',
+      price: '2.4元',
+      unit: '/百万token',
+      href: 'https://api.ujiapp.com/pricing?provider=Google',
+      dot: 'bg-emerald-400',
+      btnText: '特价',
+    },
+  ];
+
+  return (
+    <div className="relative h-full w-full overflow-auto">
+      <div className="relative h-full flex flex-col justify-center px-2 py-2">
+        <div className="w-full h-full rounded-[28px] border border-white/60 bg-gradient-to-br from-[#FFFDF9] via-[#FFF7EE] to-[#F7ECDD] px-6 py-6 shadow-[0_20px_60px_rgba(140,104,64,0.14)] dark:border-white/10 dark:bg-gradient-to-br dark:from-[#2B241D] dark:via-[#221C17] dark:to-[#191511] dark:shadow-[0_20px_50px_rgba(0,0,0,0.34)]">
+
+          {/* 标题 */}
+          <div className="mb-5">
+            <h3 className="text-base font-semibold dark:text-[#F2F0EB] text-[#5A5248]">特价 API 套餐</h3>
+            <p className="text-xs dark:text-[#9A9085] text-[#9A9085] mt-0.5">官转白菜价，按量计费，随用随充</p>
+          </div>
+
+          <div className="mb-4 flex items-start gap-3 rounded-2xl border border-[#E9D9C5] bg-gradient-to-r from-[#FFF6E9] via-[#FFF8F0] to-[#FFFDF8] px-4 py-3 shadow-[0_8px_20px_rgba(145,108,63,0.08)] dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(255,214,153,0.12),rgba(255,255,255,0.03))] dark:shadow-[0_10px_24px_rgba(0,0,0,0.18)]">
+            <span className="inline-flex shrink-0 items-center rounded-full bg-[#D97706] px-2.5 py-1 text-[10px] font-bold tracking-[0.12em] text-white dark:bg-[#F59E0B] dark:text-[#2B1F0D]">
+              赞助商活动
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-medium leading-5 text-[#6B5848] dark:text-[#E9DDD0]">
+                本区为合作活动信息展示，价格、库存、规则与可用模型请以跳转页面实时信息为准。
+              </p>
+              <p className="mt-0.5 text-[11px] leading-5 text-[#9A8B7B] dark:text-[#B8AA9B]">
+                购买前请自行核对适用场景与资费说明，本应用仅做信息聚合展示。
+              </p>
+            </div>
+          </div>
+
+          {/* 大卡片 */}
+          <div className="grid grid-cols-2 gap-4">
+            {bigPlans.map(plan => (
+              <a
+                key={plan.name}
+                href={plan.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex flex-col no-underline rounded-[24px] border border-[#E7D7C3] bg-white/95 shadow-[0_14px_30px_rgba(145,108,63,0.10)] transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(145,108,63,0.16)] dark:border-white/10 dark:bg-white/[0.06] dark:shadow-[0_12px_28px_rgba(0,0,0,0.28)]"
+              >
+                <div className="px-6 pt-6 pb-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-base font-semibold dark:text-[#F2F0EB] text-[#5A5248]">{plan.name}</span>
+                    <span className={`text-[10px] font-bold text-white px-2 py-0.5 rounded-full ${plan.badgeBg}`}>{plan.badge}</span>
+                  </div>
+                  <p className="text-xs dark:text-[#9A9085] text-[#9A9085]">{plan.desc}</p>
+                  <div className="mt-4">
+                    <span className="text-3xl font-light tracking-tight dark:text-[#F2F0EB] text-[#3A3228]">{plan.price}</span>
+                    <span className="text-xs dark:text-[#9A9085] text-[#9A9085] ml-1">{plan.unit}</span>
+                  </div>
+                </div>
+                <div className="px-6 pb-6 pt-2">
+                  <div className="btn-primary flex items-center justify-center w-full text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]" style={{ padding: '8px 16px' }}>
+                    {plan.btnText}
+                  </div>
+                </div>
+              </a>
+            ))}
+          </div>
+
+          {/* 小卡片 */}
+          <div className="grid grid-cols-3 gap-3 mt-4">
+            {smallPlans.map(plan => (
+              <a
+                key={plan.name}
+                href={plan.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex flex-col justify-between no-underline rounded-2xl border border-[#EADBC8] bg-[#FFFDF9] px-4 py-4 shadow-[0_10px_22px_rgba(145,108,63,0.08)] transition-all hover:-translate-y-0.5 hover:shadow-[0_14px_28px_rgba(145,108,63,0.12)] dark:border-white/10 dark:bg-white/[0.05] dark:shadow-[0_10px_20px_rgba(0,0,0,0.24)]"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`w-1.5 h-1.5 rounded-full ${plan.dot} flex-shrink-0`} />
+                  <span className="text-sm font-medium dark:text-[#F2F0EB] text-[#5A5248] truncate">{plan.name}</span>
+                </div>
+                <div className="mt-3">
+                  <div>
+                    <span className="text-xl font-light dark:text-[#F2F0EB] text-[#3A3228]">{plan.price}</span>
+                    <span className="text-[11px] dark:text-[#9A9085] text-[#9A9085] ml-1">{plan.unit}</span>
+                  </div>
+                  <div className="mt-3 inline-flex items-center justify-center rounded-xl border border-[#E3C7A5] bg-gradient-to-r from-[#FFF0D8] to-[#FFE4B8] px-3 py-1.5 text-xs font-semibold text-[#9A5A06] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] dark:border-[#7A5A2E] dark:bg-[linear-gradient(135deg,rgba(245,158,11,0.22),rgba(217,119,6,0.14))] dark:text-[#FFD89A]">
+                    {plan.btnText}
+                  </div>
+                </div>
+              </a>
+            ))}
+          </div>
+
+          {/* 联系方式 */}
+          <p className="mt-5 text-center text-xs dark:text-[#7A7065] text-[#9A9085]">
+            不会弄？加 Q/微信：<span className="font-medium dark:text-[#9A9085] text-[#7A7065] select-all">ooc1920</span> 协助配置
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 资源下载 iframe 组件
+const ResourcesView: React.FC = () => {
+  const resourceUrl = 'https://aieasy.hashnode.space/default-guide/5z656ga5ywl6zeo5oyh5y2x/ai';
+
+  return <EmbeddedIframeView title="资源下载" url={resourceUrl} />;
+};
+
+type TabType = 'general' | 'model' | 'nativeCapabilities' | 'im' | 'coworkMemory' | 'conversationCache' | 'clawApi' | 'resources' | 'dataBackup';
+
+const CONVERSATION_FILE_BACKUP_STATE_KEY = 'conversationFileCache.lastBackupDate';
+
+function joinDisplayPath(basePath: string, leaf: string): string {
+  const normalizedBase = basePath.trim().replace(/[\\/]+$/, '');
+  const normalizedLeaf = leaf.trim().replace(/^[\\/]+/, '');
+  if (!normalizedBase) return normalizedLeaf;
+  if (!normalizedLeaf) return normalizedBase;
+  return `${normalizedBase}/${normalizedLeaf}`;
+}
+
+export type SettingsOpenOptions = {
+  initialTab?: TabType;
+  notice?: string;
+};
+
+interface SettingsProps extends SettingsOpenOptions {
+  onClose: () => void;
+  onUpdateFound?: (info: AppUpdateInfo) => void;
+}
+
+const providerKeys = [
+  'openai',
+  'gemini',
+  'anthropic',
+  'deepseek',
+  'moonshot',
+  'zhipu',
+  'minimax',
+  'volcengine',
+  'qwen',
+  'youdao_zhiyun',
+  'stepfun',
+  'xiaomi',
+  'openrouter',
+  'ollama',
+  'custom',
+] as const;
+
+type ProviderType = (typeof providerKeys)[number];
+type ProvidersConfig = NonNullable<AppConfig['providers']>;
+type ProviderConfig = ProvidersConfig[string];
+type ProviderConnectionTestResult = {
+  success: boolean;
+  message: string;
+  provider: string;
+};
+
+const normalizeSettingsTab = (tab?: TabType): TabType => {
+  // {BREAKPOINT} SETTINGS-DEFAULT-TAB
+  // {FLOW} SETTINGS-DEFAULT-CLAWAPI: 未显式指定 tab 时默认落到 `clawApi`，若用户感觉“像跳进了别的页面”，这里是优先核查点之一。
+  if (!tab || tab === 'general') {
+    return 'clawApi';
+  }
+  return tab;
+};
+
+const providerMeta: Record<ProviderType, { label: string; icon: React.ReactNode }> = {
+  openai: { label: 'OpenAI', icon: <OpenAIIcon /> },
+  deepseek: { label: 'DeepSeek', icon: <DeepSeekIcon /> },
+  gemini: { label: 'Gemini', icon: <GeminiIcon /> },
+  anthropic: { label: 'Anthropic', icon: <AnthropicIcon /> },
+  moonshot: { label: 'Moonshot', icon: <MoonshotIcon /> },
+  zhipu: { label: 'Zhipu', icon: <ZhipuIcon /> },
+  minimax: { label: 'MiniMax', icon: <MiniMaxIcon /> },
+  youdao_zhiyun: { label: 'Youdao', icon: <YouDaoZhiYunIcon /> },
+  qwen: { label: 'Qwen', icon: <QwenIcon /> },
+  xiaomi: { label: 'Xiaomi', icon: <XiaomiIcon /> },
+  stepfun: { label: 'StepFun', icon: <StepfunIcon /> },
+  volcengine: { label: 'Volcengine', icon: <VolcengineIcon /> },
+  openrouter: { label: 'OpenRouter', icon: <OpenRouterIcon /> },
+  ollama: { label: 'Ollama', icon: <OllamaIcon /> },
+  custom: { label: 'Custom', icon: <CustomProviderIcon /> },
+};
+
+// All helper functions are now imported from './settings/settingsHelpers'
+
+// Local helper functions (not in settingsHelpers)
+const getDefaultProviders = (): ProvidersConfig => {
+  const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
+  const entries = Object.entries(providers) as Array<[string, ProviderConfig]>;
+  return Object.fromEntries(
+    entries.map(([providerKey, providerConfig]) => [
+      providerKey,
+      {
+        ...providerConfig,
+        models: providerConfig.models?.map(model => ({
+          ...model,
+          supportsImage: model.supportsImage ?? false,
+        })),
+      },
+    ])
+  ) as ProvidersConfig;
+};
+
+const getDefaultActiveProvider = (): ProviderType => {
+  const providers = (defaultConfig.providers ?? {}) as ProvidersConfig;
+  const firstEnabledProvider = providerKeys.find(providerKey => providers[providerKey]?.enabled);
+  return firstEnabledProvider ?? providerKeys[0];
+};
+
+const getDefaultActiveAgentRole = (): AgentRoleKey => AGENT_ROLE_ORDER[0];
+
+const isAgentRoleReady = (role: AgentRoleConfigMap[AgentRoleKey]): boolean => (
+  role.enabled && Boolean(role.apiUrl.trim()) && Boolean(role.apiKey.trim()) && Boolean(role.modelId.trim())
+);
+
+const resolveExplicitDefaultRole = (
+  roles: AgentRoleConfigMap,
+  activeRole: AgentRoleKey,
+  currentDefaultProvider?: string,
+): AgentRoleConfigMap[AgentRoleKey] | null => {
+  const activeRoleConfig = roles[activeRole];
+  if (isAgentRoleReady(activeRoleConfig)) {
+    return activeRoleConfig;
+  }
+
+  if (currentDefaultProvider && AGENT_ROLE_ORDER.includes(currentDefaultProvider as AgentRoleKey)) {
+    const existingDefaultRole = roles[currentDefaultProvider as AgentRoleKey];
+    if (isAgentRoleReady(existingDefaultRole)) {
+      return existingDefaultRole;
+    }
+  }
+
+  return null;
+};
+
+const joinProjectPath = (...segments: string[]): string => {
+  return segments
+    .map((segment, index) => (
+      index === 0
+        ? segment.replace(/[\\/]+$/, '')
+        : segment.replace(/^[\\/]+|[\\/]+$/g, '')
+    ))
+    .filter(Boolean)
+    .join('\\');
+};
+
+const buildRoleRuntimePaths = (workspacePath: string, roleKey: AgentRoleKey) => {
+  if (!workspacePath.trim()) {
+    return null;
+  }
+
+  const runtimeRoot = joinProjectPath(workspacePath, '.uclaw', 'web');
+  const roleRoot = joinProjectPath(runtimeRoot, 'roles', roleKey);
+  return {
+    runtimeRoot,
+    roleRoot,
+    settingsPath: joinProjectPath(roleRoot, 'role-settings.json'),
+    skillsIndexPath: joinProjectPath(roleRoot, 'skills.json'),
+    notesRoot: joinProjectPath(roleRoot, 'notes'),
+    roleNotesPath: joinProjectPath(roleRoot, 'notes', 'role-notes.md'),
+    pitfallsPath: joinProjectPath(roleRoot, 'notes', 'pitfalls.md'),
+  };
+};
+
+const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpdateFound: _onUpdateFound }) => {
+  const dispatch = useDispatch();
+  // 状态
+  const [activeTab, setActiveTab] = useState<TabType>(normalizeSettingsTab(initialTab));
+  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
+  const [language, setLanguage] = useState<'zh' | 'en'>('zh');
+  const [autoLaunch, setAutoLaunchState] = useState(false);
+  const [useSystemProxy, setUseSystemProxy] = useState(false);
+  const [conversationCacheDirectory, setConversationCacheDirectory] = useState('');
+  const [isUpdatingAutoLaunch, setIsUpdatingAutoLaunch] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [settingsLoadFailed, setSettingsLoadFailed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(notice ?? null);
+  const [testResult, setTestResult] = useState<ProviderConnectionTestResult | null>(null);
+  const [isTestResultModalOpen, setIsTestResultModalOpen] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const initialThemeRef = useRef<'light' | 'dark' | 'system'>(themeService.getTheme());
+  const didSaveRef = useRef(false);
+
+  // Add state for active provider
+  const [activeProvider, setActiveProvider] = useState<ProviderType>(getDefaultActiveProvider());
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [showConversationCacheHint, setShowConversationCacheHint] = useState(false);
+  const [conversationBackupStamp, setConversationBackupStamp] = useState<string | null>(null);
+  const [showCoworkContinuityNote, setShowCoworkContinuityNote] = useState(false);
+
+  // Add state for providers configuration
+  const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
+  const [agentRoles, setAgentRoles] = useState<AgentRoleConfigMap>(() => createDefaultAgentRoles());
+  const [nativeCapabilities, setNativeCapabilities] = useState<NativeCapabilitiesConfig>(() => normalizeNativeCapabilitiesConfig(defaultConfig.nativeCapabilities));
+  const [activeRole, setActiveRole] = useState<AgentRoleKey>(getDefaultActiveAgentRole());
+
+  // 创建引用来确保内容区域的滚动
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // 快捷键设置
+  const [shortcuts, setShortcuts] = useState({
+    newChat: 'Ctrl+N',
+    search: 'Ctrl+F',
+    settings: 'Ctrl+,',
+  });
+
+  // State for model editing
+  const [isAddingModel, setIsAddingModel] = useState(false);
+  const [isEditingModel, setIsEditingModel] = useState(false);
+  const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [newModelName, setNewModelName] = useState('');
+  const [newModelId, setNewModelId] = useState('');
+  const [newModelSupportsImage, setNewModelSupportsImage] = useState(false);
+  const [modelFormError, setModelFormError] = useState<string | null>(null);
+
+  // About tab
+  const [, setAppVersion] = useState('');
+  const [testMode, setTestMode] = useState(false);
+  const [_logoClickCount, _setLogoClickCount] = useState(0);
+  const [_testModeUnlocked, setTestModeUnlocked] = useState(false);
+
+  // Workspace info (web build)
+  const [workspacePath, setWorkspacePath] = useState<string>('');
+  const [_dataDirPath, _setDataDirPath] = useState<string>('');
+
+  useEffect(() => {
+    const appInfoApi = window.electron?.appInfo;
+    if (appInfoApi) {
+      appInfoApi.getVersion().then(setAppVersion).catch((error) => {
+        console.error('Failed to load app version:', error);
+      });
+    }
+
+    // Load workspace and data directory paths (web build)
+    if (window.electron?.workspace) {
+      window.electron.workspace.getPath().then(result => {
+        if (result.success && result.path) {
+          setWorkspacePath(result.path);
+        }
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    setShowApiKey(false);
+  }, [activeProvider]);
+
+  const coworkConfig = useSelector((state: RootState) => state.cowork.config);
+
+  const [coworkMemoryEnabled, setCoworkMemoryEnabled] = useState<boolean>(coworkConfig.memoryEnabled ?? true);
+  const [coworkMemoryLlmJudgeEnabled, setCoworkMemoryLlmJudgeEnabled] = useState<boolean>(coworkConfig.memoryLlmJudgeEnabled ?? false);
+  const [coworkMemoryEntries, setCoworkMemoryEntries] = useState<CoworkUserMemoryEntry[]>([]);
+  const [coworkMemoryStats, setCoworkMemoryStats] = useState<CoworkMemoryStats | null>(null);
+  const [coworkMemoryListLoading, setCoworkMemoryListLoading] = useState<boolean>(false);
+  const [coworkMemoryQuery, setCoworkMemoryQuery] = useState<string>('');
+  // {标记} P0-身份筛选-DYNAMIC: 记忆归桶按真实 agentRoleKey，前端筛选不能只写死四主角色。
+  const [coworkMemoryAgentRoleKey, setCoworkMemoryAgentRoleKey] = useState<string | 'all'>('all');
+  const [coworkMemoryEditingId, setCoworkMemoryEditingId] = useState<string | null>(null);
+  const [coworkMemoryDraftText, setCoworkMemoryDraftText] = useState<string>('');
+  const [showMemoryModal, setShowMemoryModal] = useState<boolean>(false);
+
+  const conversationBackupDir = useMemo(() => (
+    conversationBackupStamp ? joinDisplayPath(conversationCacheDirectory, conversationBackupStamp) : ''
+  ), [conversationBackupStamp, conversationCacheDirectory]);
+
+  const conversationBackupManifestPath = useMemo(() => (
+    conversationBackupDir ? joinDisplayPath(conversationBackupDir, 'manifest.json') : ''
+  ), [conversationBackupDir]);
+
+  useEffect(() => {
+    setCoworkMemoryEnabled(coworkConfig.memoryEnabled ?? true);
+    setCoworkMemoryLlmJudgeEnabled(coworkConfig.memoryLlmJudgeEnabled ?? false);
+  }, [
+    coworkConfig.memoryEnabled,
+    coworkConfig.memoryLlmJudgeEnabled,
+  ]);
+
+  const loadConversationBackupState = useCallback(async () => {
+    try {
+      const value = await localStore.getItem<string>(CONVERSATION_FILE_BACKUP_STATE_KEY);
+      setConversationBackupStamp(typeof value === 'string' && value.trim() ? value.trim() : null);
+    } catch (error) {
+      console.error('Failed to load conversation backup state:', error);
+      setConversationBackupStamp(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSettings = async () => {
+      try {
+        await configService.init();
+        if (cancelled) {
+          return;
+        }
+
+        const config = configService.getConfig();
+        setSettingsLoadFailed(false);
+
+        initialThemeRef.current = config.theme;
+        setTheme(config.theme);
+        setLanguage(config.language);
+        setUseSystemProxy(config.useSystemProxy ?? false);
+        const conversationFileCache = resolveConversationFileCacheConfig(config);
+        setConversationCacheDirectory(conversationFileCache.directory);
+        void loadConversationBackupState();
+        const savedTestMode = config.app?.testMode ?? false;
+        setTestMode(savedTestMode);
+        if (savedTestMode) setTestModeUnlocked(true);
+
+        const autoLaunchApi = window.electron?.autoLaunch;
+        if (autoLaunchApi) {
+          autoLaunchApi.get().then(({ enabled }) => {
+            if (!cancelled) {
+              setAutoLaunchState(enabled);
+            }
+          }).catch(err => {
+            console.error('Failed to load auto-launch setting:', err);
+          });
+        }
+
+        if (config.api) {
+          const normalizedApiBaseUrl = config.api.baseUrl.toLowerCase();
+          if (normalizedApiBaseUrl.includes('openai')) {
+            setActiveProvider('openai');
+            setProviders(prev => ({
+              ...prev,
+              openai: {
+                ...prev.openai,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('deepseek')) {
+            setActiveProvider('deepseek');
+            setProviders(prev => ({
+              ...prev,
+              deepseek: {
+                ...prev.deepseek,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('moonshot.ai') || normalizedApiBaseUrl.includes('moonshot.cn')) {
+            setActiveProvider('moonshot');
+            setProviders(prev => ({
+              ...prev,
+              moonshot: {
+                ...prev.moonshot,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('bigmodel.cn')) {
+            setActiveProvider('zhipu');
+            setProviders(prev => ({
+              ...prev,
+              zhipu: {
+                ...prev.zhipu,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('minimax')) {
+            setActiveProvider('minimax');
+            setProviders(prev => ({
+              ...prev,
+              minimax: {
+                ...prev.minimax,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('openapi.youdao.com')) {
+            setActiveProvider('youdao_zhiyun');
+            setProviders(prev => ({
+              ...prev,
+              youdao_zhiyun: {
+                ...prev.youdao_zhiyun,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('dashscope')) {
+            setActiveProvider('qwen');
+            setProviders(prev => ({
+              ...prev,
+              qwen: {
+                ...prev.qwen,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('stepfun')) {
+            setActiveProvider('stepfun');
+            setProviders(prev => ({
+              ...prev,
+              stepfun: {
+                ...prev.stepfun,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('openrouter.ai')) {
+            setActiveProvider('openrouter');
+            setProviders(prev => ({
+              ...prev,
+              openrouter: {
+                ...prev.openrouter,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('googleapis')) {
+            setActiveProvider('gemini');
+            setProviders(prev => ({
+              ...prev,
+              gemini: {
+                ...prev.gemini,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('anthropic')) {
+            setActiveProvider('anthropic');
+            setProviders(prev => ({
+              ...prev,
+              anthropic: {
+                ...prev.anthropic,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          } else if (normalizedApiBaseUrl.includes('ollama') || normalizedApiBaseUrl.includes('11434')) {
+            setActiveProvider('ollama');
+            setProviders(prev => ({
+              ...prev,
+              ollama: {
+                ...prev.ollama,
+                enabled: true,
+                apiKey: config.api.key,
+                baseUrl: config.api.baseUrl
+              }
+            }));
+          }
+        }
+
+        if (config.providers) {
+          setProviders(prev => {
+            const merged = {
+              ...prev,
+              ...config.providers,
+            };
+
+            const firstEnabledProvider = providerKeys.find(providerKey => merged[providerKey]?.enabled);
+            if (firstEnabledProvider) {
+              setActiveProvider(firstEnabledProvider);
+            }
+
+            return Object.fromEntries(
+              Object.entries(merged).map(([providerKey, providerConfig]) => {
+                const models = providerConfig.models?.map(model => ({
+                  ...model,
+                  supportsImage: model.supportsImage ?? false,
+                }));
+                return [
+                  providerKey,
+                  {
+                    ...providerConfig,
+                    apiFormat: getEffectiveApiFormat(providerKey, (providerConfig as ProviderConfig).apiFormat),
+                    models,
+                  },
+                ];
+              })
+            ) as ProvidersConfig;
+          });
+        }
+
+        const resolvedAgentRoles = resolveAgentRolesFromConfig(config);
+        setAgentRoles(resolvedAgentRoles);
+        setNativeCapabilities(normalizeNativeCapabilitiesConfig(config.nativeCapabilities));
+        const firstEnabledRole = AGENT_ROLE_ORDER.find((key) => resolvedAgentRoles[key].enabled);
+        setActiveRole(firstEnabledRole ?? getDefaultActiveAgentRole());
+
+        if (config.shortcuts) {
+          setShortcuts(prev => ({
+            ...prev,
+            ...config.shortcuts,
+          }));
+        }
+        setSettingsLoaded(true);
+      } catch (error) {
+        if (!cancelled) {
+          setError(error instanceof Error ? error.message : 'Failed to load settings');
+          setSettingsLoadFailed(true);
+          setSettingsLoaded(true);
+        }
+      }
+    };
+
+    void loadSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadConversationBackupState]);
+
+  useEffect(() => {
+    if (activeTab !== 'conversationCache') {
+      return;
+    }
+    void loadConversationBackupState();
+  }, [activeTab, loadConversationBackupState]);
+
+  useEffect(() => {
+    return () => {
+      if (didSaveRef.current) {
+        return;
+      }
+      themeService.setTheme(initialThemeRef.current);
+    };
+  }, []);
+
+  // 监听标签页切换，确保内容区域滚动到顶部
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTop = 0;
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    setNoticeMessage(notice ?? null);
+  }, [notice]);
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(normalizeSettingsTab(initialTab));
+    }
+  }, [initialTab]);
+
+
+  // Compute visible providers based on language
+  const visibleProviders = useMemo(() => {
+    const visibleKeys = getVisibleProviders(language);
+    const filtered: Partial<ProvidersConfig> = {};
+    for (const key of visibleKeys) {
+      if (providers[key as keyof ProvidersConfig]) {
+        filtered[key as keyof ProvidersConfig] = providers[key as keyof ProvidersConfig];
+      }
+    }
+    return filtered as ProvidersConfig;
+  }, [language, providers]);
+
+  // Ensure activeProvider is always in visibleProviders when language changes
+  useEffect(() => {
+    const visibleKeys = Object.keys(visibleProviders) as ProviderType[];
+    if (visibleKeys.length > 0 && !visibleKeys.includes(activeProvider)) {
+      // If current activeProvider is not visible, switch to first visible provider
+      const firstEnabledVisible = visibleKeys.find(key => visibleProviders[key]?.enabled);
+      setActiveProvider(firstEnabledVisible ?? visibleKeys[0]);
+    }
+  }, [visibleProviders, activeProvider]);
+
+  const hasCoworkConfigChanges = (coworkConfig.executionMode || 'local') !== 'local'
+    || coworkMemoryEnabled !== coworkConfig.memoryEnabled
+    || coworkMemoryLlmJudgeEnabled !== coworkConfig.memoryLlmJudgeEnabled;
+
+  const coworkMemoryRoleOptions = useMemo(() => {
+    const ordered = new Set<string>([
+      ...AGENT_ROLE_ORDER,
+      ...coworkMemoryEntries
+        .map((entry) => entry.agentRoleKey?.trim() || '')
+        .filter(Boolean),
+      activeRole,
+      ...(coworkMemoryAgentRoleKey !== 'all' ? [coworkMemoryAgentRoleKey] : []),
+    ]);
+
+    return Array.from(ordered);
+  }, [activeRole, coworkMemoryAgentRoleKey, coworkMemoryEntries]);
+
+  const getMemoryRoleLabel = useCallback((roleKey: string): string => {
+    return AGENT_ROLE_LABELS[roleKey as AgentRoleKey] ?? roleKey;
+  }, []);
+
+
+  const loadCoworkMemoryData = useCallback(async () => {
+    setCoworkMemoryListLoading(true);
+    const effectiveAgentRoleKey = coworkMemoryAgentRoleKey !== 'all' ? coworkMemoryAgentRoleKey : undefined;
+    try {
+      const [entries, stats] = await Promise.all([
+        coworkService.listMemoryEntries({
+          query: coworkMemoryQuery.trim() || undefined,
+          agentRoleKey: effectiveAgentRoleKey,
+        }),
+        coworkService.getMemoryStats({
+          agentRoleKey: effectiveAgentRoleKey,
+        }),
+      ]);
+      setCoworkMemoryEntries(entries);
+      setCoworkMemoryStats(stats);
+    } catch (loadError) {
+      console.error('Failed to load cowork memory data:', loadError);
+      setCoworkMemoryEntries([]);
+      setCoworkMemoryStats(null);
+    } finally {
+      setCoworkMemoryListLoading(false);
+    }
+  }, [
+    coworkMemoryQuery,
+    coworkMemoryAgentRoleKey,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'coworkMemory') return;
+    void loadCoworkMemoryData();
+  }, [activeTab, loadCoworkMemoryData]);
+
+  useEffect(() => {
+    if (activeTab !== 'coworkMemory') return;
+
+    const refresh = () => {
+      void loadCoworkMemoryData();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refresh();
+      }
+    };
+
+    const intervalId = window.setInterval(refresh, 12000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [activeTab, loadCoworkMemoryData]);
+
+  const resetCoworkMemoryEditor = () => {
+    setCoworkMemoryEditingId(null);
+    setCoworkMemoryDraftText('');
+    setShowMemoryModal(false);
+  };
+
+  const handleSaveCoworkMemoryEntry = async () => {
+    const text = coworkMemoryDraftText.trim();
+    if (!text) return;
+    const targetAgentRoleKey = coworkMemoryAgentRoleKey !== 'all' ? coworkMemoryAgentRoleKey : activeRole;
+    const targetModelId = AGENT_ROLE_ORDER.includes(targetAgentRoleKey as AgentRoleKey)
+      ? agentRoles[targetAgentRoleKey as AgentRoleKey]?.modelId?.trim() || undefined
+      : undefined;
+
+    setCoworkMemoryListLoading(true);
+    try {
+      if (coworkMemoryEditingId) {
+        const updatedEntry = await coworkService.updateMemoryEntry({
+          id: coworkMemoryEditingId,
+          text,
+          status: 'created',
+          isExplicit: true,
+        });
+        if (!updatedEntry) {
+          throw new Error('更新记忆条目失败');
+        }
+      } else {
+        const createdEntry = await coworkService.createMemoryEntry({
+          text,
+          isExplicit: true,
+          agentRoleKey: targetAgentRoleKey,
+          modelId: targetModelId,
+        });
+        if (!createdEntry) {
+          throw new Error('新增记忆条目失败');
+        }
+      }
+      resetCoworkMemoryEditor();
+      await loadCoworkMemoryData();
+      
+      // 显示保存成功提示
+      showGlobalToast('设置已保存');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : '保存记忆条目失败');
+    } finally {
+      setCoworkMemoryListLoading(false);
+    }
+  };
+
+  const handleEditCoworkMemoryEntry = (entry: CoworkUserMemoryEntry) => {
+    setCoworkMemoryEditingId(entry.id);
+    setCoworkMemoryDraftText(entry.text);
+    setShowMemoryModal(true);
+  };
+
+  const handleDeleteCoworkMemoryEntry = async (entry: CoworkUserMemoryEntry) => {
+    setCoworkMemoryListLoading(true);
+    try {
+      const deleted = await coworkService.deleteMemoryEntry({ id: entry.id });
+      if (!deleted) {
+        throw new Error('删除记忆条目失败');
+      }
+      if (coworkMemoryEditingId === entry.id) {
+        resetCoworkMemoryEditor();
+      }
+      await loadCoworkMemoryData();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : '删除记忆条目失败');
+    } finally {
+      setCoworkMemoryListLoading(false);
+    }
+  };
+
+  const getMemoryStatusLabel = (status: CoworkUserMemoryEntry['status']): string => {
+    if (status === 'created') return '生效中';
+    if (status === 'stale') return '暂不使用';
+    return '已删除';
+  };
+
+  const formatMemoryUpdatedAt = (timestamp: number): string => {
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return '-';
+    try {
+      return new Date(timestamp).toLocaleString();
+    } catch {
+      return '-';
+    }
+  };
+
+  const handleOpenCoworkMemoryModal = () => {
+    resetCoworkMemoryEditor();
+    setShowMemoryModal(true);
+  };
+
+  const handleRefreshCoworkMemoryData = () => {
+    void loadCoworkMemoryData();
+  };
+
+  const handleAgentRoleChange = useCallback((roleKey: AgentRoleKey, field: keyof AgentRoleConfigMap[AgentRoleKey], value: string | boolean) => {
+    setAgentRoles((prev) => ({
+      ...prev,
+      [roleKey]: {
+        ...prev[roleKey],
+        [field]: value,
+      },
+    }));
+  }, []);
+
+  const handleAgentRoleSelect = useCallback((roleKey: AgentRoleKey) => {
+    setActiveRole(roleKey);
+    setShowApiKey(false);
+    setIsTestResultModalOpen(false);
+    setTestResult(null);
+  }, []);
+
+  const handleAgentRoleToggle = useCallback((roleKey: AgentRoleKey) => {
+    setAgentRoles((prev) => ({
+      ...prev,
+      [roleKey]: {
+        ...prev[roleKey],
+        enabled: !prev[roleKey].enabled,
+      },
+    }));
+  }, []);
+
+  // {埋点} ⚡ API连通性测试入口 (ID: api-test-001) → settingsHelpers.buildURL → electronShim.api.fetch → apiProxy /api/api/fetch
+  const handleTestAgentRoleConnection = useCallback(async () => {
+    const role = normalizeAgentRolesForSave(agentRoles)[activeRole];
+    const testingApiKey = pickNextApiKey(role.apiKey, activeRole) || role.apiKey;
+    setIsTesting(true);
+    setIsTestResultModalOpen(false);
+    setTestResult(null);
+
+    if (!testingApiKey) {
+      showTestResultModal({ success: false, message: '需要设置API密钥' }, role.label);
+      setIsTesting(false);
+      return;
+    }
+
+    if (!role.modelId) {
+      showTestResultModal({ success: false, message: '请先添加模型' }, role.label);
+      setIsTesting(false);
+      return;
+    }
+
+    try {
+      const normalizedBaseUrl = role.apiUrl.replace(/\/+$/, '');
+      let response: Awaited<ReturnType<typeof window.electron.api.fetch>>;
+
+      if (role.apiFormat === 'anthropic') {
+        const anthropicUrl = normalizedBaseUrl.endsWith('/v1')
+          ? `${normalizedBaseUrl}/messages`
+          : `${normalizedBaseUrl}/v1/messages`;
+        response = await window.electron.api.fetch({
+          url: anthropicUrl,
+          method: 'POST',
+          headers: {
+            'x-api-key': testingApiKey,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: role.modelId,
+            max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
+            messages: [{ role: 'user', content: 'Hi' }],
+          }),
+        });
+      } else {
+        response = await window.electron.api.fetch({
+          url: buildOpenAICompatibleChatCompletionsUrl(normalizedBaseUrl, activeRole),
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${testingApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: role.modelId,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: CONNECTIVITY_TEST_TOKEN_BUDGET,
+          }),
+        });
+      }
+
+      // {埋点} 🔌 测试结果处理 (ID: api-test-006) response.ok → 启用角色 + 显示成功弹窗
+      if (response.ok) {
+        showTestResultModal({ success: true, message: `${role.label} (${role.modelId}) 连接成功` }, role.label);
+        handleAgentRoleChange(activeRole, 'enabled', true);
+      } else {
+        const data = response.data || {};
+        const errorMessage = data.error?.message || data.message || `${'连接失败'}: ${response.status}`;
+        showTestResultModal({ success: false, message: errorMessage }, role.label);
+      }
+    } catch (err) {
+      showTestResultModal({
+        success: false,
+        message: err instanceof Error ? err.message : '连接失败',
+      }, role.label);
+    } finally {
+      setIsTesting(false);
+    }
+  }, [activeRole, agentRoles, handleAgentRoleChange]);
+
+  const handleBrowseConversationCacheDirectory = useCallback(async () => {
+    try {
+      const result = await window.electron?.dialog?.selectDirectory();
+      if (result?.success && result.path) {
+        setConversationCacheDirectory(result.path);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleOpenShellPath = useCallback(async (targetPath: string, mode: 'open' | 'reveal' = 'reveal') => {
+    if (!targetPath.trim()) {
+      return;
+    }
+
+    try {
+      const shellApi = window.electron?.shell;
+      const result = mode === 'open'
+        ? await shellApi?.openPath(targetPath)
+        : await shellApi?.showItemInFolder(targetPath);
+
+      if (!result?.success) {
+        showGlobalToast(`打开失败：${result?.error || '路径不可用'}`);
+      }
+    } catch (openError) {
+      showGlobalToast(openError instanceof Error ? openError.message : '打开路径失败');
+    }
+  }, []);
+
+  // {埋点} 💾 配置保存入口 (ID: settings-save-001) normalizeAgentRoles → buildProviderConfigs → configService.updateConfig
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const currentConfig = configService.getConfig();
+      const normalizedAgentRoles = normalizeAgentRolesForSave(agentRoles);
+      const normalizedProviders = Object.fromEntries(
+        Object.entries(providers).map(([providerKey, providerConfig]) => {
+          const apiFormat = getEffectiveApiFormat(providerKey, providerConfig.apiFormat);
+          return [
+            providerKey,
+            {
+              ...providerConfig,
+              apiFormat,
+              baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl, apiFormat),
+            },
+          ];
+        })
+      ) as ProvidersConfig;
+
+      const roleProviders = buildProviderConfigsFromAgentRoles(normalizedAgentRoles);
+      const mergedProviders = {
+        ...normalizedProviders,
+        ...roleProviders,
+      } as ProvidersConfig;
+
+      const explicitDefaultRole = resolveExplicitDefaultRole(
+        normalizedAgentRoles,
+        activeRole,
+        currentConfig.model.defaultModelProvider,
+      );
+      const persistedDefaultProvider = (
+        currentConfig.model.defaultModelProvider
+        && !isAgentRoleProviderKey(currentConfig.model.defaultModelProvider)
+      )
+        ? currentConfig.model.defaultModelProvider
+        : undefined;
+      const runtimeDefaultApi = explicitDefaultRole
+        ? {
+          apiKey: explicitDefaultRole.apiKey,
+          baseUrl: explicitDefaultRole.apiUrl,
+        }
+        : {
+          apiKey: currentConfig.api.key,
+          baseUrl: currentConfig.api.baseUrl,
+        };
+
+      await configService.updateConfig({
+        api: {
+          key: runtimeDefaultApi.apiKey,
+          baseUrl: runtimeDefaultApi.baseUrl,
+        },
+        model: {
+          ...currentConfig.model,
+          defaultModel: explicitDefaultRole?.modelId || currentConfig.model.defaultModel,
+          defaultModelProvider: persistedDefaultProvider,
+        },
+        providers: mergedProviders,
+        agentRoles: normalizedAgentRoles,
+        nativeCapabilities,
+        theme,
+        language,
+        useSystemProxy,
+        ...buildConversationFileCacheUpdate(conversationCacheDirectory, true),
+        shortcuts,
+        app: {
+          ...currentConfig.app,
+          testMode,
+        },
+      });
+
+      // 应用主题
+      themeService.setTheme(theme);
+
+      // 同步前端当前 API 客户端到显式默认角色，避免被隐式主角色推断带偏。
+      apiService.setConfig({
+        apiKey: runtimeDefaultApi.apiKey,
+        baseUrl: runtimeDefaultApi.baseUrl,
+      });
+
+      dispatch(setAvailableModels(buildAvailableModelsFromAgentRoles(normalizedAgentRoles)));
+
+      if (hasCoworkConfigChanges) {
+        await coworkService.updateConfig({
+          executionMode: 'local',
+          memoryEnabled: coworkMemoryEnabled,
+          memoryLlmJudgeEnabled: coworkMemoryLlmJudgeEnabled,
+        });
+      }
+
+      didSaveRef.current = true;
+      
+      // 显示保存成功提示
+      showGlobalToast('设置已保存');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to save settings');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // 标签页切换处理
+  const handleTabChange = (tab: TabType) => {
+    if (tab !== 'model') {
+      setIsAddingModel(false);
+      setIsEditingModel(false);
+      setEditingModelId(null);
+      setNewModelName('');
+      setNewModelId('');
+      setNewModelSupportsImage(false);
+      setModelFormError(null);
+    }
+    setActiveTab(tab);
+  };
+
+  // 快捷键更新处理
+  // 阻止点击设置窗口时事件传播到背景
+  const handleSettingsClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+  };
+
+  const handleSaveNewModel = () => {
+    const modelId = newModelId.trim();
+
+    if (activeProvider === 'ollama') {
+      // For Ollama, only the model name (stored as modelId) is required
+      if (!modelId) {
+        setModelFormError('请填写模型名称');
+        return;
+      }
+    } else {
+      const modelName = newModelName.trim();
+      if (!modelName || !modelId) {
+        setModelFormError('请填写模型名称和模型ID');
+        return;
+      }
+    }
+
+    // For Ollama, auto-fill display name from modelId if not provided
+    const modelName = activeProvider === 'ollama'
+      ? (newModelName.trim() && newModelName.trim() !== modelId ? newModelName.trim() : modelId)
+      : newModelName.trim();
+
+    const currentModels = providers[activeProvider].models ?? [];
+    const duplicateModel = currentModels.find(
+      model => model.id === modelId && (!isEditingModel || model.id !== editingModelId)
+    );
+    if (duplicateModel) {
+      setModelFormError('模型ID已存在，请使用不同的ID');
+      return;
+    }
+
+    const nextModel = {
+      id: modelId,
+      name: modelName,
+      supportsImage: newModelSupportsImage,
+    };
+    const updatedModels = isEditingModel && editingModelId
+      ? currentModels.map(model => (model.id === editingModelId ? nextModel : model))
+      : [...currentModels, nextModel];
+
+    setProviders(prev => ({
+      ...prev,
+      [activeProvider]: {
+        ...prev[activeProvider],
+        models: updatedModels
+      }
+    }));
+
+    setIsAddingModel(false);
+    setIsEditingModel(false);
+    setEditingModelId(null);
+    setNewModelName('');
+    setNewModelId('');
+    setNewModelSupportsImage(false);
+    setModelFormError(null);
+  };
+
+  const handleCancelModelEdit = () => {
+    setIsAddingModel(false);
+    setIsEditingModel(false);
+    setEditingModelId(null);
+    setNewModelName('');
+    setNewModelId('');
+    setNewModelSupportsImage(false);
+    setModelFormError(null);
+  };
+
+  const handleModelDialogKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancelModelEdit();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSaveNewModel();
+    }
+  };
+
+  const showTestResultModal = (
+    result: Omit<ProviderConnectionTestResult, 'provider'>,
+    provider: string
+  ) => {
+    setTestResult({
+      ...result,
+      provider,
+    });
+    setIsTestResultModalOpen(true);
+  };
+
+  // 渲染标签页
+  const sidebarTabs: { key: TabType; label: string; subtitle: string; icon: React.ReactNode }[] = useMemo(() => [
+    { key: 'model',          label: 'API 配置',          subtitle: '模型、密钥与连接', icon: <CubeIcon className="h-5 w-5" /> },
+    { key: 'nativeCapabilities', label: '外挂能力', subtitle: '底层插件、优先级、角色开关', icon: <PlusCircleIcon className="h-5 w-5" /> },
+    { key: 'clawApi',        label: '特价 API',          subtitle: '活动与购买入口', icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-4-8h8m-9.75 9.75h11.5A2.25 2.25 0 0020 17.5V6.5A2.25 2.25 0 0017.75 4.25H6.25A2.25 2.25 0 004 6.5v11a2.25 2.25 0 002.25 2.25z" />
+      </svg>
+    ), },
+    { key: 'im',             label: '消息频道',          subtitle: '飞书、钉钉与频道配置', icon: <SignalIcon className="h-5 w-5" /> },
+    { key: 'conversationCache', label: '对话文件', subtitle: '缓存、导出与目录', icon: <EnvelopeIcon className="h-5 w-5" /> },
+    { key: 'coworkMemory',   label: '记忆管理', subtitle: '连续性与记忆条目', icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+      </svg>
+    ), },
+    { key: 'resources',      label: '资源下载', subtitle: '工具与指南入口', icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+      </svg>
+    ), },
+    { key: 'dataBackup',    label: '数据备份', subtitle: '导出、备份与恢复', icon: (
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+      </svg>
+    ), },
+  ], []);
+
+  const activeTabLabel = useMemo(() => {
+    return sidebarTabs.find(t => t.key === activeTab)?.label ?? '';
+  }, [activeTab, sidebarTabs]);
+
+  const renderTabContent = () => {
+    switch(activeTab) {
+      case 'general':
+        return (
+          <div className="space-y-8">
+            {/* Language Section - hardcoded zh */}
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                {'语言'}
+              </h4>
+              <div className="w-[140px] shrink-0">
+                <ThemedSelect
+                  id="language"
+                  value={language}
+                  onChange={(value) => {
+                    setLanguage(value as 'zh' | 'en');
+                  }}
+                  options={[
+                    { value: 'zh', label: '中文' },
+                    { value: 'en', label: 'English' }
+                  ]}
+                />
+              </div>
+            </div>
+
+            {/* Workspace Path Section (web build) */}
+            {workspacePath && (
+              <div>
+                <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-3">
+                  Workspace Path
+                </h4>
+                <div className="text-sm dark:text-claude-darkSecondaryText text-claude-textSecondary break-all font-mono">
+                  {workspacePath}
+                </div>
+              </div>
+            )}
+
+            {/* Auto-launch Section (Electron only) */}
+            {hasAutoLaunch() && (
+              <div>
+                <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-3">
+                  {'开机自启动'}
+                </h4>
+                <label className="flex items-center justify-between cursor-pointer">
+                  <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">
+                    {'系统启动时自动运行应用'}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoLaunch}
+                    onClick={async () => {
+                      if (isUpdatingAutoLaunch) return;
+                      const next = !autoLaunch;
+                      setIsUpdatingAutoLaunch(true);
+                      try {
+                        const result = await window.electron.autoLaunch.set(next);
+                        if (result.success) {
+                          setAutoLaunchState(next);
+                        } else {
+                          setError(result.error || 'Failed to update auto-launch setting');
+                        }
+                      } catch (err) {
+                        console.error('Failed to set auto-launch:', err);
+                        setError('Failed to update auto-launch setting');
+                      } finally {
+                        setIsUpdatingAutoLaunch(false);
+                      }
+                    }}
+                    disabled={isUpdatingAutoLaunch}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                      isUpdatingAutoLaunch ? 'opacity-50 cursor-not-allowed' : ''
+                    } ${
+                      autoLaunch
+                        ? 'bg-claude-accent'
+                        : 'bg-gray-300 dark:bg-gray-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        autoLaunch ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </label>
+              </div>
+            )}
+
+            {/* System proxy Section */}
+            <div>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-3">
+                {'使用系统代理'}
+              </h4>
+              <label className="flex items-center justify-between cursor-pointer">
+                <span className="text-sm dark:text-claude-darkSecondaryText text-claude-secondaryText">
+                  {'开启后网络请求将跟随系统代理（保存后生效）'}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={useSystemProxy}
+                  onClick={() => {
+                    setUseSystemProxy((prev) => !prev);
+                  }}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                    useSystemProxy
+                      ? 'bg-claude-accent'
+                      : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      useSystemProxy ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </label>
+            </div>
+
+            {/* Appearance Section */}
+            <div>
+              <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-3">
+                {'外观'}
+              </h4>
+              <div className="grid grid-cols-3 gap-4">
+                {([
+                  { value: 'light' as const, label: '浅色' },
+                  { value: 'dark' as const, label: '深色' },
+                  { value: 'system' as const, label: '跟随系统' },
+                ]).map((option) => {
+                  const isSelected = theme === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        setTheme(option.value);
+                        themeService.setTheme(option.value);
+                      }}
+                      className={`flex flex-col items-center rounded-xl border-2 p-3 transition-colors cursor-pointer ${
+                        isSelected
+                          ? 'border-claude-accent bg-claude-accent/5 dark:bg-claude-accent/10'
+                          : 'dark:border-claude-darkBorder border-claude-border hover:border-claude-accent/50 dark:hover:border-claude-accent/50'
+                      }`}
+                    >
+                      <svg viewBox="0 0 120 80" className="w-full h-auto rounded-md mb-2 overflow-hidden" xmlns="http://www.w3.org/2000/svg">
+                        {option.value === 'light' && (
+                          <>
+                            <rect width="120" height="80" fill="#F8F9FB" />
+                            <rect x="0" y="0" width="30" height="80" fill="#EBEDF0" />
+                            <rect x="4" y="8" width="22" height="4" rx="2" fill="#C8CBD0" />
+                            <rect x="4" y="16" width="18" height="3" rx="1.5" fill="#D5D7DB" />
+                            <rect x="4" y="22" width="20" height="3" rx="1.5" fill="#D5D7DB" />
+                            <rect x="4" y="28" width="16" height="3" rx="1.5" fill="#D5D7DB" />
+                            <rect x="36" y="8" width="78" height="64" rx="4" fill="#FFFFFF" />
+                            <rect x="42" y="16" width="50" height="4" rx="2" fill="#D5D7DB" />
+                            <rect x="42" y="24" width="66" height="3" rx="1.5" fill="#E2E4E7" />
+                            <rect x="42" y="30" width="60" height="3" rx="1.5" fill="#E2E4E7" />
+                            <rect x="42" y="36" width="55" height="3" rx="1.5" fill="#E2E4E7" />
+                            <rect x="42" y="46" width="40" height="4" rx="2" fill="#D5D7DB" />
+                            <rect x="42" y="54" width="66" height="3" rx="1.5" fill="#E2E4E7" />
+                            <rect x="42" y="60" width="58" height="3" rx="1.5" fill="#E2E4E7" />
+                          </>
+                        )}
+                        {option.value === 'dark' && (
+                          <>
+                            <rect width="120" height="80" fill="#0F1117" />
+                            <rect x="0" y="0" width="30" height="80" fill="#151820" />
+                            <rect x="4" y="8" width="22" height="4" rx="2" fill="#3A3F4B" />
+                            <rect x="4" y="16" width="18" height="3" rx="1.5" fill="#2A2F3A" />
+                            <rect x="4" y="22" width="20" height="3" rx="1.5" fill="#2A2F3A" />
+                            <rect x="4" y="28" width="16" height="3" rx="1.5" fill="#2A2F3A" />
+                            <rect x="36" y="8" width="78" height="64" rx="4" fill="#1A1D27" />
+                            <rect x="42" y="16" width="50" height="4" rx="2" fill="#3A3F4B" />
+                            <rect x="42" y="24" width="66" height="3" rx="1.5" fill="#252930" />
+                            <rect x="42" y="30" width="60" height="3" rx="1.5" fill="#252930" />
+                            <rect x="42" y="36" width="55" height="3" rx="1.5" fill="#252930" />
+                            <rect x="42" y="46" width="40" height="4" rx="2" fill="#3A3F4B" />
+                            <rect x="42" y="54" width="66" height="3" rx="1.5" fill="#252930" />
+                            <rect x="42" y="60" width="58" height="3" rx="1.5" fill="#252930" />
+                          </>
+                        )}
+                        {option.value === 'system' && (
+                          <>
+                            <defs>
+                              <clipPath id="left-half">
+                                <rect x="0" y="0" width="60" height="80" />
+                              </clipPath>
+                              <clipPath id="right-half">
+                                <rect x="60" y="0" width="60" height="80" />
+                              </clipPath>
+                            </defs>
+                            {/* Light half */}
+                            <g clipPath="url(#left-half)">
+                              <rect width="120" height="80" fill="#F8F9FB" />
+                              <rect x="0" y="0" width="30" height="80" fill="#EBEDF0" />
+                              <rect x="4" y="8" width="22" height="4" rx="2" fill="#C8CBD0" />
+                              <rect x="4" y="16" width="18" height="3" rx="1.5" fill="#D5D7DB" />
+                              <rect x="4" y="22" width="20" height="3" rx="1.5" fill="#D5D7DB" />
+                              <rect x="4" y="28" width="16" height="3" rx="1.5" fill="#D5D7DB" />
+                              <rect x="36" y="8" width="78" height="64" rx="4" fill="#FFFFFF" />
+                              <rect x="42" y="16" width="50" height="4" rx="2" fill="#D5D7DB" />
+                              <rect x="42" y="24" width="66" height="3" rx="1.5" fill="#E2E4E7" />
+                              <rect x="42" y="30" width="60" height="3" rx="1.5" fill="#E2E4E7" />
+                              <rect x="42" y="36" width="55" height="3" rx="1.5" fill="#E2E4E7" />
+                              <rect x="42" y="46" width="40" height="4" rx="2" fill="#D5D7DB" />
+                              <rect x="42" y="54" width="66" height="3" rx="1.5" fill="#E2E4E7" />
+                            </g>
+                            {/* Dark half */}
+                            <g clipPath="url(#right-half)">
+                              <rect width="120" height="80" fill="#0F1117" />
+                              <rect x="0" y="0" width="30" height="80" fill="#151820" />
+                              <rect x="4" y="8" width="22" height="4" rx="2" fill="#3A3F4B" />
+                              <rect x="4" y="16" width="18" height="3" rx="1.5" fill="#2A2F3A" />
+                              <rect x="4" y="22" width="20" height="3" rx="1.5" fill="#2A2F3A" />
+                              <rect x="4" y="28" width="16" height="3" rx="1.5" fill="#2A2F3A" />
+                              <rect x="36" y="8" width="78" height="64" rx="4" fill="#1A1D27" />
+                              <rect x="42" y="16" width="50" height="4" rx="2" fill="#3A3F4B" />
+                              <rect x="42" y="24" width="66" height="3" rx="1.5" fill="#252930" />
+                              <rect x="42" y="30" width="60" height="3" rx="1.5" fill="#252930" />
+                              <rect x="42" y="36" width="55" height="3" rx="1.5" fill="#252930" />
+                              <rect x="42" y="46" width="40" height="4" rx="2" fill="#3A3F4B" />
+                              <rect x="42" y="54" width="66" height="3" rx="1.5" fill="#252930" />
+                            </g>
+                            {/* Divider line */}
+                            <line x1="60" y1="0" x2="60" y2="80" stroke="#888" strokeWidth="0.5" />
+                          </>
+                        )}
+                      </svg>
+                      <span className={`text-xs font-medium ${
+                        isSelected
+                          ? 'text-claude-accent'
+                          : 'dark:text-claude-darkText text-claude-text'
+                      }`}>
+                        {option.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'conversationCache':
+        return (
+          <div className="space-y-6">
+            <div className="space-y-4 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                    {'对话文件缓存目录'}
+                  </div>
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'这里保存对话快照，以及浏览器侧暂存的附件和导出文件。'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowConversationCacheHint((value) => !value)}
+                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium dark:border-claude-darkBorder/70 border-claude-border/70 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                >
+                  <InformationCircleIcon className="h-3.5 w-3.5" />
+                  {'说明'}
+                </button>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="conversation-cache-directory"
+                  className="block text-sm font-medium dark:text-claude-darkText text-claude-text mb-1"
+                >
+                  {'对话文件缓存目录'}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="conversation-cache-directory"
+                    type="text"
+                    value={conversationCacheDirectory}
+                    onChange={(event) => setConversationCacheDirectory(event.target.value)}
+                    placeholder={'输入本地目录，例如 D:\\UCLAW\\conversation-cache'}
+                    className="flex-1 rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-white px-3 py-2 text-sm dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { void handleBrowseConversationCacheDirectory(); }}
+                    className="px-3 py-2 text-sm rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                  >
+                    {'浏览'}
+                  </button>
+                </div>
+              </div>
+
+              {showConversationCacheHint && (
+                <div className="rounded-lg dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset px-3 py-3 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {'系统会把每日对话快照写到这里；浏览器侧上传的暂存文件、Markdown 导出和图片导出也会优先往这里归档。运行中的 skills/workspace 仍会优先保留工作目录内的真实路径，避免打断 OpenClaw skills 读文件。'}
+                </div>
+              )}
+
+              <div className="rounded-lg dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset px-3 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                      {'最近一次对话归档'}
+                    </div>
+                    {!conversationCacheDirectory.trim() ? (
+                      <div className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                        {'先配置对话文件缓存目录，系统才会写入每日归档。'}
+                      </div>
+                    ) : conversationBackupStamp ? (
+                      <div className="mt-1 space-y-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary break-all">
+                        <div>{`日期目录：${conversationBackupStamp}`}</div>
+                        <div>{`归档路径：${conversationBackupDir}`}</div>
+                        <div>{`Manifest：${conversationBackupManifestPath}`}</div>
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                        {'暂时还没有检测到已写入的每日归档。等本轮对话收口后，系统会把当天快照写进这里。'}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { void loadConversationBackupState(); }}
+                    className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                  >
+                    {'刷新'}
+                  </button>
+                </div>
+
+                {conversationBackupStamp && conversationCacheDirectory.trim() && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { void handleOpenShellPath(conversationBackupDir, 'open'); }}
+                      className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                    >
+                      {'打开归档目录'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void handleOpenShellPath(conversationBackupManifestPath, 'reveal'); }}
+                      className="px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                    >
+                      {'定位 manifest'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'im':
+        return (
+          <div className="h-full min-h-[540px]">
+            <IMSettings />
+          </div>
+        );
+
+      case 'nativeCapabilities':
+        return (
+          <NativeCapabilitiesSettings
+            value={nativeCapabilities}
+            onChange={setNativeCapabilities}
+          />
+        );
+
+      case 'coworkMemory':
+        return (
+          <div className="space-y-6">
+            <div className="space-y-3 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border bg-gradient-to-br from-[#f8efe8] via-white to-[#f6f8fb] dark:from-claude-darkSurface dark:via-claude-darkSurface/90 dark:to-claude-darkSurface/70">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                    {'连续性保护'}
+                  </div>
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'系统会尽量帮你保住跨天连续性。'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCoworkContinuityNote((value) => !value)}
+                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium dark:border-claude-darkBorder/70 border-claude-border/70 dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                >
+                  <InformationCircleIcon className="h-3.5 w-3.5" />
+                  {'这是什么'}
+                </button>
+              </div>
+              {showCoworkContinuityNote && (
+                <div className="rounded-lg dark:bg-claude-darkSurfaceInset bg-claude-surfaceInset px-3 py-3 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {'短期共享线程负责当天交接，长期记忆负责跨天延续。热缓存空了，就尝试从长期记忆里把“今天的第一棒”接回来。'}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border">
+              <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                {'记忆管理'}
+              </div>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={coworkMemoryEnabled}
+                  onChange={(event) => setCoworkMemoryEnabled(event.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block text-sm dark:text-claude-darkText text-claude-text">
+                    {'启用用户记忆'}
+                  </span>
+                  <span className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'将稳定事实注入到系统提示词中的 <userMemories> 区块。'}
+                  </span>
+                  <span className="mt-1 block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'建议开启后直接使用下方“记忆条目管理”，无需额外配置。'}
+                  </span>
+                </span>
+              </label>
+              <label className={`flex items-start gap-3 ${coworkMemoryEnabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
+                <input
+                  type="checkbox"
+                  checked={coworkMemoryLlmJudgeEnabled}
+                  onChange={(event) => setCoworkMemoryLlmJudgeEnabled(event.target.checked)}
+                  disabled={!coworkMemoryEnabled}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block text-sm dark:text-claude-darkText text-claude-text">
+                    {'启用 LLM 二级判定'}
+                  </span>
+                  <span className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'仅对规则边界样本调用模型复核，提升准确率（会增加少量 API 调用）。'}
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="space-y-4 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                    {'记忆条目管理'}
+                  </div>
+                  <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'你可以在这里查看、搜索、新增、编辑或删除记忆内容。'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRefreshCoworkMemoryData}
+                    disabled={coworkMemoryListLoading}
+                    className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg border dark:border-claude-darkBorder border-claude-border text-sm dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover disabled:opacity-60 transition-colors"
+                  >
+                    {'刷新'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenCoworkMemoryModal}
+                    className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-claude-accent hover:bg-claude-accentHover text-white text-sm transition-colors"
+                  >
+                    <PlusCircleIcon className="h-4 w-4 mr-1.5" />
+                    {'新增条目'}
+                  </button>
+                </div>
+              </div>
+
+              {coworkMemoryStats && (
+                <div className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {`${'记忆总数'}: ${coworkMemoryStats.total - coworkMemoryStats.deleted} · ${'生效中'}: ${coworkMemoryStats.created} · ${'暂不使用'}: ${coworkMemoryStats.stale}`}
+                </div>
+              )}
+
+              {/* {标记} P0-新增：身份过滤器 */}
+              <div className="grid grid-cols-1 gap-2">
+                <select
+                  value={coworkMemoryAgentRoleKey}
+                  onChange={(e) => setCoworkMemoryAgentRoleKey(e.target.value as string | 'all')}
+                  className="rounded-lg border px-3 py-2 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+                >
+                  <option value="all">所有身份</option>
+                  {coworkMemoryRoleOptions.map((roleKey) => (
+                    <option key={roleKey} value={roleKey}>
+                      {getMemoryRoleLabel(roleKey)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <input
+                type="text"
+                value={coworkMemoryQuery}
+                onChange={(event) => setCoworkMemoryQuery(event.target.value)}
+                placeholder={'搜索记忆内容/来源'}
+                className="w-full rounded-lg border px-3 py-2 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface"
+              />
+              <div className="text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {'记忆只按身份归桶；默认展示全部身份。新增条目会写入当前选中身份；若筛选为“所有身份”，则写入当前设置页角色。'}
+              </div>
+
+              <div className="max-h-[500px] overflow-auto rounded-lg border dark:border-claude-darkBorder border-claude-border">
+                {coworkMemoryListLoading ? (
+                  <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'加载中...'}
+                  </div>
+                ) : coworkMemoryEntries.length === 0 ? (
+                  <div className="px-3 py-3 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'暂无记忆条目'}
+                  </div>
+                ) : (
+                  <div className="divide-y dark:divide-claude-darkBorder divide-claude-border">
+                    {coworkMemoryEntries.map((entry) => (
+                      <div key={entry.id} className="px-3 py-3 text-xs hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 space-y-1 min-w-0">
+                            <div className="font-medium dark:text-claude-darkText text-claude-text break-words">
+                              {entry.text}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                              <span className="rounded-full border px-2 py-0.5 dark:border-claude-darkBorder border-claude-border">
+                                {getMemoryStatusLabel(entry.status)}
+                              </span>
+                              {/* {标记} P0-新增：显示身份标签 */}
+                              {entry.agentRoleKey && (
+                                <span className="rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 px-2 py-0.5 text-xs">
+                                  {AGENT_ROLE_LABELS[entry.agentRoleKey as AgentRoleKey] ?? entry.agentRoleKey}
+                                </span>
+                              )}
+                              <span>
+                                {`${'最后更新'}: ${formatMemoryUpdatedAt(entry.updatedAt)}`}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleEditCoworkMemoryEntry(entry)}
+                              className="rounded border px-2 py-1 dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                            >
+                              {'编辑'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { void handleDeleteCoworkMemoryEntry(entry); }}
+                              className="rounded border px-2 py-1 text-red-500 dark:border-claude-darkBorder border-claude-border hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60 transition-colors"
+                              disabled={coworkMemoryListLoading}
+                            >
+                              {'删除'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+          </div>
+        );
+
+      case 'model': {
+        const activeRoleConfig = agentRoles[activeRole];
+        const activeRoleRuntimePaths = buildRoleRuntimePaths(workspacePath, activeRole);
+
+        return (
+          <div className="flex h-full gap-4">
+            <div className="w-2/5 border-r dark:border-claude-darkBorder border-claude-border pr-3 space-y-2 overflow-y-auto">
+              <div className="px-1 pb-2 border-b dark:border-claude-darkBorder border-claude-border">
+                <h3 className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                  {'角色配置'}
+                </h3>
+                <p className="mt-1 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {'模型列表已收口为 4 个 Agent 角色，每个角色绑定一套通用兼容 API。'}
+                </p>
+              </div>
+
+              {AGENT_ROLE_ORDER.map((roleKey) => {
+                const role = agentRoles[roleKey];
+                const ready = isAgentRoleReady(role);
+
+                return (
+                  <button
+                    key={roleKey}
+                    type="button"
+                    onClick={() => handleAgentRoleSelect(roleKey)}
+                    className={`w-full rounded-xl border p-3 text-left transition-colors ${
+                      activeRole === roleKey
+                        ? 'border-claude-accent bg-claude-accent/10 dark:bg-claude-accent/15'
+                        : 'border-claude-border dark:border-claude-darkBorder bg-claude-surface dark:bg-claude-darkSurface/50 hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`text-sm font-medium ${activeRole === roleKey ? 'text-claude-accent' : 'dark:text-claude-darkText text-claude-text'}`}>
+                            {role.label}
+                          </span>
+                          {role.supportsImage && (
+                            <span className="rounded-md bg-claude-accent/10 px-1.5 py-0.5 text-[10px] text-claude-accent">
+                              {'图片输入'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                          {role.description}
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${ready ? 'bg-green-500/15 text-green-600 dark:text-green-400' : 'bg-amber-500/15 text-amber-600 dark:text-amber-300'}`}>
+                            {ready ? '已配置' : '待配置'}
+                          </span>
+                          {role.modelId && (
+                            <span className="rounded-full border border-claude-border dark:border-claude-darkBorder px-2 py-0.5 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                              {role.modelId}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div
+                        className={`mt-0.5 flex h-5 w-9 items-center rounded-full transition-colors ${role.enabled ? 'bg-claude-accent' : 'bg-claude-border dark:bg-claude-darkBorder'}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleAgentRoleToggle(roleKey);
+                        }}
+                      >
+                        <div className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${role.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="w-3/5 pl-1 pr-2 space-y-4 overflow-y-auto [scrollbar-gutter:stable]">
+              <div className="flex items-center justify-between rounded-xl border px-4 py-3 dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/40 bg-claude-surface/40">
+                <div>
+                  <h3 className="text-base font-medium dark:text-claude-darkText text-claude-text">
+                    {activeRoleConfig.label}
+                  </h3>
+                  <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {activeRoleConfig.description}
+                  </p>
+                </div>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${isAgentRoleReady(activeRoleConfig) ? 'bg-green-500/15 text-green-600 dark:text-green-400' : 'bg-amber-500/15 text-amber-600 dark:text-amber-300'}`}>
+                  {isAgentRoleReady(activeRoleConfig) ? '已配置' : '待配置'}
+                </span>
+              </div>
+
+              {activeRoleRuntimePaths && (
+                <div className="rounded-xl border px-4 py-3 dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/35 bg-claude-surface/35 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-medium dark:text-claude-darkText text-claude-text">
+                        {'角色文件'}
+                      </div>
+                      <div className="mt-1 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                        {'这里只保留当前角色的项目内文件入口，方便直接打开对应目录和索引。'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { void handleOpenShellPath(activeRoleRuntimePaths.roleRoot, 'open'); }}
+                      className="inline-flex items-center rounded-xl border px-3 py-1.5 text-xs font-medium dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                    >
+                      {'打开角色目录'}
+                    </button>
+                  </div>
+
+                  {[
+                    { label: '角色目录', path: activeRoleRuntimePaths.roleRoot, openMode: 'open' as const },
+                    { label: '设定视图', path: activeRoleRuntimePaths.settingsPath, openMode: 'reveal' as const },
+                    { label: '技能索引', path: activeRoleRuntimePaths.skillsIndexPath, openMode: 'reveal' as const },
+                    { label: '笔记目录', path: activeRoleRuntimePaths.notesRoot, openMode: 'open' as const },
+                  ].map((entry) => (
+                    <div
+                      key={entry.label}
+                      className="rounded-xl border px-3 py-3 dark:border-claude-darkBorder/80 border-claude-border/80 dark:bg-claude-darkSurface/30 bg-white/50"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-medium dark:text-claude-darkText text-claude-text">
+                            {entry.label}
+                          </div>
+                          <div className="mt-1 break-all font-mono text-[11px] leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                            {entry.path}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { void handleOpenShellPath(entry.path, entry.openMode); }}
+                          className="shrink-0 inline-flex items-center rounded-lg border px-2.5 py-1.5 text-[11px] font-medium dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                        >
+                          {entry.openMode === 'open' ? '打开' : '定位'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <label htmlFor={`${activeRole}-apiUrl`} className="block text-xs font-medium dark:text-claude-darkText text-claude-text">
+                    {'API Base URL'}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => { void window.electron?.shell?.openExternal?.('https://api.ujiapp.com'); }}
+                    className="shrink-0 rounded-lg border px-2 py-1 text-[11px] font-medium dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                  >
+                    {'点击开通'}
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    id={`${activeRole}-apiUrl`}
+                    type="text"
+                    value={activeRoleConfig.apiUrl}
+                    onChange={(event) => handleAgentRoleChange(activeRole, 'apiUrl', event.target.value)}
+                    className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-8 text-xs"
+                    placeholder={'api.ujiapp.com/v1'}
+                  />
+                  {activeRoleConfig.apiUrl && (
+                    <div className="absolute right-2 inset-y-0 flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => handleAgentRoleChange(activeRole, 'apiUrl', '')}
+                        className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
+                        title={'清除'}
+                      >
+                        <XCircleIconSolid className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {!activeRoleConfig.apiUrl.trim() && (
+                  <p className="mt-1 text-[11px] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'留空时建议填写：api.ujiapp.com/v1'}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor={`${activeRole}-apiKey`} className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1">
+                  {'API Key（支持多个）'}
+                </label>
+                <div className="relative">
+                  <input
+                    id={`${activeRole}-apiKey`}
+                    type={showApiKey ? 'text' : 'password'}
+                    value={activeRoleConfig.apiKey}
+                    onChange={(event) => handleAgentRoleChange(activeRole, 'apiKey', event.target.value)}
+                    className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 pr-16 text-xs"
+                    placeholder={'输入你的 API Key'}
+                  />
+                  <div className="absolute right-2 inset-y-0 flex items-center gap-1">
+                    {activeRoleConfig.apiKey && (
+                      <button
+                        type="button"
+                        onClick={() => handleAgentRoleChange(activeRole, 'apiKey', '')}
+                        className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
+                        title={'清除'}
+                      >
+                        <XCircleIconSolid className="h-4 w-4" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="p-0.5 rounded text-claude-textSecondary dark:text-claude-darkTextSecondary hover:text-claude-accent transition-colors"
+                      title={showApiKey ? '隐藏' : '显示'}
+                    >
+                      {showApiKey ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {'多个 Key 用英文逗号隔开，运行时会自动轮询。'}
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor={`${activeRole}-modelId`} className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1">
+                  {'模型 ID'}
+                </label>
+                <input
+                  id={`${activeRole}-modelId`}
+                  type="text"
+                  value={activeRoleConfig.modelId}
+                  onChange={(event) => handleAgentRoleChange(activeRole, 'modelId', event.target.value)}
+                  className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                  placeholder="gpt-4.1-mini"
+                />
+              </div>
+
+
+              <div>
+                <label className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1">
+                  {'兼容协议'}
+                </label>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name={`${activeRole}-apiFormat`}
+                      value="anthropic"
+                      checked={activeRoleConfig.apiFormat === 'anthropic'}
+                      onChange={() => handleAgentRoleChange(activeRole, 'apiFormat', 'anthropic')}
+                      className="h-3.5 w-3.5 text-claude-accent focus:ring-claude-accent dark:bg-claude-darkSurface bg-claude-surface"
+                    />
+                    <span className="ml-2 text-xs dark:text-claude-darkText text-claude-text">
+                      {'Anthropic 兼容'}
+                    </span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name={`${activeRole}-apiFormat`}
+                      value="openai"
+                      checked={activeRoleConfig.apiFormat === 'openai'}
+                      onChange={() => handleAgentRoleChange(activeRole, 'apiFormat', 'openai')}
+                      className="h-3.5 w-3.5 text-claude-accent focus:ring-claude-accent dark:bg-claude-darkSurface bg-claude-surface"
+                    />
+                    <span className="ml-2 text-xs dark:text-claude-darkText text-claude-text">
+                      {'OpenAI 兼容'}
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {activeRole === 'designer' && (
+                <div>
+                  <label htmlFor={`${activeRole}-imageApiType`} className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-1">
+                    {'生图接口类型'}
+                  </label>
+                  <ThemedSelect
+                    id={`${activeRole}-imageApiType`}
+                    value={activeRoleConfig.imageApiType}
+                    onChange={(value) => handleAgentRoleChange(activeRole, 'imageApiType', value)}
+                    options={getDesignerImageApiTypeOptions(activeRoleConfig.imageApiType).map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    }))}
+                  />
+                  <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'这里按接口形态分流：`generic` 走 `/v1/chat/completions`，`images` 走 `/v1/images/generations`，`google` 走 `generateContent`。旧值仅保留展示，标记为可疑1。'}
+                  </p>
+                  <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {`当前已确认图片模型：${CONFIRMED_DESIGNER_IMAGE_MODEL_HINTS.map((item) => `${item.label} → ${item.apiType}`).join('；')}。Sora / Veo 这类视频链路先不做。`}
+                  </p>
+                </div>
+              )}
+
+              <div className="rounded-xl border px-4 py-3 dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface/35 bg-claude-surface/35 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => { void handleTestAgentRoleConnection(); }}
+                  disabled={isTesting || !activeRoleConfig.apiKey.trim() || !activeRoleConfig.modelId.trim() || !activeRoleConfig.apiUrl.trim()}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <SignalIcon className="h-3.5 w-3.5 mr-1.5" />
+                  {isTesting ? '测试中...' : '测试连接'}
+                </button>
+                <p className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {'这里只保留角色级 API 配置主链：URL、Key、模型、协议与连接测试。'}
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      case 'clawApi':
+        return (
+          <ClawApiIframeView />
+        );
+
+      case 'resources':
+        return (
+          <ResourcesView />
+        );
+
+      case 'dataBackup':
+        return (
+          <DataBackup />
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 modal-backdrop-pearl flex items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="relative flex w-full modal-pearl overflow-hidden modal-content"
+        style={{
+          width: 'min(92vw, var(--uclaw-shell-max-width), calc(88vh * 1.6))',
+          minWidth: 'min(var(--uclaw-shell-min-width), 92vw)',
+          minHeight: 'min(var(--uclaw-shell-min-height), 88vh)',
+          maxHeight: '88vh',
+          borderRadius: 'var(--uclaw-shell-radius)',
+          aspectRatio: 'var(--uclaw-shell-aspect-ratio)',
+        }}
+        onClick={handleSettingsClick}
+      >
+        {/* Left sidebar */}
+        <div
+          className="w-[clamp(248px,22%,296px)] shrink-0 flex flex-col sidebar-pearl overflow-y-auto"
+          style={{ borderTopLeftRadius: 'var(--uclaw-shell-radius)', borderBottomLeftRadius: 'var(--uclaw-shell-radius)' }}
+        >
+          <div className="px-6 pt-6 pb-4">
+            <div className="rounded-[22px] border border-white/60 bg-white/55 px-4 py-4 shadow-[0_10px_24px_rgba(203,174,150,0.10)] dark:border-white/10 dark:bg-white/[0.04]">
+              <h2 className="text-base font-semibold dark:text-claude-darkText text-claude-text">{'设置'}</h2>
+              <p className="mt-1 text-[11px] leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {'把模型、频道、记忆和文件入口轻轻收在一起。'}
+              </p>
+            </div>
+          </div>
+          <div className="px-4 pb-4">
+            <div className="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.14em] dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {'功能区'}
+            </div>
+          <nav className="flex flex-col gap-2 rounded-[24px] border border-white/60 bg-white/45 p-2 shadow-[0_10px_24px_rgba(203,174,150,0.08)] dark:border-white/10 dark:bg-white/[0.03]">
+            {sidebarTabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => handleTabChange(tab.key)}
+                className={`group flex items-center gap-3 rounded-[18px] px-3.5 py-3 transition-colors duration-200 ease-out text-left relative overflow-hidden ${
+                  activeTab === tab.key
+                    ? 'bg-gradient-to-r from-claude-accent/16 to-claude-accent/8 text-claude-accent shadow-[0_10px_24px_rgba(193,156,133,0.14)]'
+                    : 'dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text dark:hover:bg-claude-darkSurfaceHover/50 hover:bg-claude-surfaceHover/50'
+                }`}
+              >
+                {/* 左侧选择条 - 纯 CSS 渐变 */}
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full transition-colors duration-200 ease-out"
+                  style={{
+                    height: activeTab === tab.key ? '60%' : '0%',
+                    opacity: activeTab === tab.key ? 1 : 0,
+                    background: activeTab === tab.key 
+                      ? 'linear-gradient(180deg, #E0B8A8 0%, #D4A894 100%)'
+                      : 'linear-gradient(180deg, rgba(59,130,246,0.6) 0%, rgba(59,130,246,0.4) 100%)',
+                    transform: `translateY(-50%) scale(${activeTab === tab.key ? 1 : 0})`,
+                  }}
+                />
+                <span className={`relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${
+                  activeTab === tab.key
+                    ? 'border-claude-accent/20 bg-white/80 text-claude-accent dark:border-claude-accent/20 dark:bg-white/10'
+                    : 'border-transparent bg-white/40 dark:bg-white/[0.04]'
+                }`}>
+                  {tab.icon}
+                </span>
+                <span className="relative z-10 min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{tab.label}</span>
+                  <span className="mt-0.5 block truncate text-[11px] font-normal dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {tab.subtitle}
+                  </span>
+                </span>
+                {activeTab === tab.key && (
+                  <span className="relative z-10 h-2 w-2 shrink-0 rounded-full bg-claude-accent/80 shadow-[0_0_0_4px_rgba(224,184,168,0.16)]" />
+                )}
+              </button>
+            ))}
+          </nav>
+          </div>
+        </div>
+
+        {/* Right content */}
+        <div
+          className="relative flex-1 flex flex-col min-w-0 overflow-hidden bg-gradient-pearl"
+          style={{ borderTopRightRadius: 'var(--uclaw-shell-radius)', borderBottomRightRadius: 'var(--uclaw-shell-radius)' }}
+        >
+          {/* Content header */}
+          <div className="flex justify-between items-center px-8 pt-6 pb-4 shrink-0">
+            <h3 className="text-base font-semibold dark:text-claude-darkText text-claude-text">{activeTabLabel}</h3>
+            <button
+              onClick={onClose}
+              className="dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text p-2 dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl transition-colors"
+            >
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+          </div>
+
+          {noticeMessage && (
+            <div className="px-8">
+              <ErrorMessage
+                message={noticeMessage}
+                onClose={() => setNoticeMessage(null)}
+              />
+            </div>
+          )}
+
+          {error && (
+            <div className="px-8">
+              <ErrorMessage
+                message={error}
+                onClose={() => setError(null)}
+              />
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+            {/* Tab content */}
+            <div
+              ref={contentRef}
+              className="px-8 py-6 flex-1 overflow-y-auto"
+              style={{ scrollbarGutter: 'stable' }}
+            >
+              {settingsLoaded ? (
+                settingsLoadFailed ? (
+                  <div className="flex h-full min-h-[320px] items-center justify-center">
+                    <div className="max-w-lg rounded-2xl border border-red-300/60 bg-red-50/80 px-5 py-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+                      <div className="font-medium">{'设置读取失败'}</div>
+                      <div className="mt-2 leading-6">
+                        {error || '当前没有拿到配置真值。为避免把默认配置误写回去，保存已被暂时禁用。'}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  renderTabContent()
+                )
+              ) : (
+                <div className="flex h-full min-h-[320px] items-center justify-center">
+                  <div className="rounded-2xl border border-claude-border/60 bg-claude-surface/60 px-5 py-4 text-sm text-claude-textSecondary dark:border-claude-darkBorder/60 dark:bg-claude-darkSurface/50 dark:text-claude-darkTextSecondary">
+                    正在读取设置真值...
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer buttons */}
+            <div className="flex items-center justify-end gap-4 px-8 py-5 dark:border-claude-darkBorder border-claude-border border-t bg-gradient-pearl-footer shrink-0">
+              {activeTab === 'im' ? (
+                <>
+                  <div className="mr-auto text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                    {'消息频道会在字段失焦后即时保存。这里不再额外提交，避免和右侧启停状态打架。'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-5 py-2.5 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border"
+                  >
+                    {'关闭'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-5 py-2.5 dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl transition-colors text-sm font-medium border dark:border-claude-darkBorder border-claude-border"
+                  >
+                    {'取消'}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSaving || !settingsLoaded || settingsLoadFailed}
+                    className="px-5 py-2.5 bg-gradient-to-r from-purple-400 to-purple-600 hover:from-purple-500 hover:to-purple-700 text-white rounded-xl transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/40"
+                  >
+                    {isSaving ? '保存中...' : '保存'}
+                  </button>
+                </>
+              )}
+            </div>
+          </form>
+
+        </div>
+
+        {isTestResultModalOpen && testResult && (
+          <div
+            className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
+            onClick={() => setIsTestResultModalOpen(false)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={'连接测试结果'}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-2xl dark:bg-claude-darkSurface bg-claude-bg dark:border-claude-darkBorder border-claude-border border shadow-modal p-4"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-semibold dark:text-claude-darkText text-claude-text">
+                  {'连接测试结果'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setIsTestResultModalOpen(false)}
+                  className="p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+                >
+                  <XMarkIcon className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                <span>{providerMeta[testResult.provider as ProviderType]?.label ?? testResult.provider}</span>
+                <span className="text-[11px]">•</span>
+                <span className={`inline-flex items-center gap-1 ${testResult.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {testResult.success ? (
+                    <CheckCircleIcon className="h-4 w-4" />
+                  ) : (
+                    <XCircleIcon className="h-4 w-4" />
+                  )}
+                  {testResult.success ? '连接成功' : '连接失败'}
+                </span>
+              </div>
+
+              <p className="mt-3 text-xs leading-5 dark:text-claude-darkText text-claude-text whitespace-pre-wrap break-words max-h-56 overflow-y-auto">
+                {testResult.message}
+              </p>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsTestResultModalOpen(false)}
+                  className="px-3 py-1.5 text-xs font-medium rounded-xl border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                >
+                  {'关闭'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {(isAddingModel || isEditingModel) && (
+          <div
+            className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
+            onClick={handleCancelModelEdit}
+          >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={isEditingModel ? '编辑模型' : '添加新模型'}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={handleModelDialogKeyDown}
+                className="w-full max-w-md rounded-2xl dark:bg-claude-darkSurface bg-claude-bg dark:border-claude-darkBorder border-claude-border border shadow-modal p-4"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-semibold dark:text-claude-darkText text-claude-text">
+                    {isEditingModel ? '编辑模型' : '添加新模型'}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={handleCancelModelEdit}
+                    className="p-1 dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:text-claude-darkText hover:text-claude-text rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover"
+                  >
+                    <XMarkIcon className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {modelFormError && (
+                  <p className="mb-3 text-xs text-red-600 dark:text-red-400">
+                    {modelFormError}
+                  </p>
+                )}
+
+                <div className="space-y-3">
+                  {activeProvider === 'ollama' ? (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                          {'模型名称'}
+                        </label>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={newModelId}
+                          onChange={(e) => {
+                            setNewModelId(e.target.value);
+                            if (!newModelName || newModelName === newModelId) {
+                              setNewModelName(e.target.value);
+                            }
+                            if (modelFormError) {
+                              setModelFormError(null);
+                            }
+                          }}
+                          className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                          placeholder={'qwen3:8b'}
+                        />
+                        <p className="mt-1 text-[11px] dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+                          {'输入 Ollama 中已安装的模型名称，如 qwen3:8b、lfm2:latest'}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                          {'显示名称（可选）'}
+                        </label>
+                        <input
+                          type="text"
+                          value={newModelName === newModelId ? '' : newModelName}
+                          onChange={(e) => {
+                            setNewModelName(e.target.value || newModelId);
+                            if (modelFormError) {
+                              setModelFormError(null);
+                            }
+                          }}
+                          className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                          placeholder={'我的 Qwen3 模型'}
+                        />
+                        <p className="mt-1 text-[11px] dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/70">
+                          {'自定义在列表中显示的名称，留空则使用模型名称'}
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                          {'模型名称'}
+                        </label>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={newModelName}
+                          onChange={(e) => {
+                            setNewModelName(e.target.value);
+                            if (modelFormError) {
+                              setModelFormError(null);
+                            }
+                          }}
+                          className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                          placeholder="GPT-4"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary mb-1">
+                          {'模型ID'}
+                        </label>
+                        <input
+                          type="text"
+                          value={newModelId}
+                          onChange={(e) => {
+                            setNewModelId(e.target.value);
+                            if (modelFormError) {
+                              setModelFormError(null);
+                            }
+                          }}
+                          className="block w-full rounded-xl bg-claude-surfaceInset dark:bg-claude-darkSurfaceInset dark:border-claude-darkBorder border-claude-border border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-xs"
+                          placeholder="gpt-4"
+                        />
+                      </div>
+                    </>
+                  )}
+                  <div className="flex items-center space-x-2">
+                    <input
+                      id={`${activeProvider}-supportsImage`}
+                      type="checkbox"
+                      checked={newModelSupportsImage}
+                      onChange={(e) => setNewModelSupportsImage(e.target.checked)}
+                      className="h-3.5 w-3.5 text-claude-accent focus:ring-claude-accent dark:bg-claude-darkSurface bg-claude-surface border-claude-border dark:border-claude-darkBorder rounded"
+                    />
+                    <label
+                      htmlFor={`${activeProvider}-supportsImage`}
+                      className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary"
+                    >
+                      {'支持图像输入'}
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex justify-end space-x-2 mt-4">
+                  <button
+                    type="button"
+                    onClick={handleCancelModelEdit}
+                    className="px-3 py-1.5 text-xs dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl border dark:border-claude-darkBorder border-claude-border"
+                  >
+                    {'取消'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveNewModel}
+                    className="px-3 py-1.5 text-xs text-white bg-claude-accent hover:bg-claude-accentHover rounded-xl"
+                  >
+                    {'保存'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Memory Modal */}
+          {showMemoryModal && (
+            <div
+              className="absolute inset-0 z-20 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
+              onClick={resetCoworkMemoryEditor}
+            >
+              <div
+                className="dark:bg-claude-darkSurface bg-claude-surface dark:border-claude-darkBorder border-claude-border border rounded-2xl shadow-xl w-full max-w-md"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="px-5 pt-5 pb-4 border-b dark:border-claude-darkBorder border-claude-border">
+                  <h3 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
+                    {coworkMemoryEditingId ? '更新条目' : '新增条目'}
+                  </h3>
+                </div>
+
+                <div className="px-5 py-4 space-y-4">
+                  {coworkMemoryEditingId && (
+                    <div className="rounded-lg border px-2 py-1 text-xs dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                      {'正在编辑当前记忆'}
+                    </div>
+                  )}
+                  <textarea
+                    value={coworkMemoryDraftText}
+                    onChange={(event) => setCoworkMemoryDraftText(event.target.value)}
+                    placeholder={'输入要保存的记忆内容'}
+                    autoFocus
+                    className="min-h-[200px] w-full rounded-lg border px-3 py-2 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30"
+                  />
+                </div>
+
+                <div className="flex justify-end space-x-2 px-5 pb-5">
+                  <button
+                    type="button"
+                    onClick={resetCoworkMemoryEditor}
+                    className="px-3 py-1.5 text-sm dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover rounded-xl border dark:border-claude-darkBorder border-claude-border transition-colors"
+                  >
+                    {'取消'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { void handleSaveCoworkMemoryEntry(); }}
+                    disabled={!coworkMemoryDraftText.trim() || coworkMemoryListLoading}
+                    className="px-3 py-1.5 text-sm text-white bg-claude-accent hover:bg-claude-accentHover rounded-xl disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {coworkMemoryEditingId ? '保存' : '新增条目'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+      </div>
+    </div>
+  );
+};
+
+export default Settings; 

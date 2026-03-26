@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Account Settings</title>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/settings">Settings</a>
+      </nav>
+    </header>
+    <main>
+      <h1>Account Settings</h1>
+      <section>
+        <h2>Profile</h2>
+        <form>
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" placeholder="you@example.com" required />
+
+          <label for="display_name">Display Name</label>
+          <input id="display_name" name="display_name" type="text" placeholder="Summer" />
+
+          <label for="timezone">Timezone</label>
+          <select id="timezone" name="timezone">
+            <option>America/Los_Angeles</option>
+          </select>
+
+          <button type="submit">Save Settings</button>
+          <button type="button">Cancel</button>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

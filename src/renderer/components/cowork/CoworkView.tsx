@@ -1,0 +1,491 @@
+// {路标} FLOW-PAGE-COWORK
+import React, { useEffect, useState, useRef } from 'react';
+import { useSelector, useDispatch } from 'react-redux';
+import { RootState } from '../../store';
+import { clearCurrentSession } from '../../store/slices/coworkSlice';
+import { clearActiveSkills } from '../../store/slices/skillSlice';
+import { clearSelection } from '../../store/slices/quickActionSlice';
+import { coworkService } from '../../services/cowork';
+import { getPlatform } from '../../utils/platform';
+import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
+import CoworkSessionDetail from './CoworkSessionDetail';
+import { buildSessionPreviewText, type SessionSourceFilter } from './sessionRecordUtils';
+import ModelSelector from '../ModelSelector';
+import { AGENT_ROLE_ORDER, type AgentRoleKey } from '../../../shared/agentRoleConfig';
+import { setSelectedModel } from '../../store/slices/modelSlice';
+import { coworkService as coworkServiceForRole } from '../../services/cowork';
+import SidebarToggleIcon from '../icons/SidebarToggleIcon';
+import ComposeIcon from '../icons/ComposeIcon';
+import WindowTitleBar from '../window/WindowTitleBar';
+import type { SettingsOpenOptions } from '../Settings';
+import type { CoworkImageAttachment } from '../../types/cowork';
+
+export interface CoworkViewProps {
+  onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
+  onShowSkills?: () => void;
+  onShowSessionHistory?: (filter?: SessionSourceFilter) => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+  onNewChat?: () => void;
+  updateBadge?: React.ReactNode;
+}
+
+const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSkills, onShowSessionHistory, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+  const dispatch = useDispatch();
+  const isMac = getPlatform() === 'darwin';
+  const [isInitialized, setIsInitialized] = useState(false);
+  // Track if we're starting a session to prevent duplicate submissions
+  const isStartingRef = useRef(false);
+  // Track pending start request so stop can cancel delayed startup.
+  const pendingStartRef = useRef<{ requestId: number; cancelled: boolean } | null>(null);
+  const startRequestIdRef = useRef(0);
+  // Ref for CoworkPromptInput
+  const promptInputRef = useRef<CoworkPromptInputRef>(null);
+
+  const {
+    sessions,
+    currentSession,
+    loadingSessionId,
+    isStreaming,
+    config,
+  } = useSelector((state: RootState) => state.cowork);
+
+  const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
+  const selectedModel = useSelector((state: RootState) => state.model.selectedModel);
+  const availableModels = useSelector((state: RootState) => state.model.availableModels);
+  const selectedModelRef = useRef(selectedModel);
+  const availableModelsRef = useRef(availableModels);
+  selectedModelRef.current = selectedModel;
+  availableModelsRef.current = availableModels;
+
+  const latestVisibleSession = React.useMemo(() => {
+    // {标记} P1-CHANNEL-VISIBILITY-FIX: 首页最近会话不再只限 PC，本地也要能看见外渠道刚落库的会话。
+    return [...sessions]
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
+  }, [sessions]);
+
+  const buildApiConfigNotice = (error?: string) => {
+    const baseNotice = '请先在角色配置中完成可用模型与 API Key 设置。';
+    if (!error) {
+      return baseNotice;
+    }
+    const normalizedError = error.trim();
+    if (
+      normalizedError.startsWith('No enabled provider found for model:')
+      || normalizedError === 'No available model configured in enabled providers.'
+    ) {
+      return baseNotice;
+    }
+    return `${baseNotice} (${error})`;
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      await coworkService.init();
+      setIsInitialized(true);
+
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const apiConfig = await coworkService.checkApiConfig();
+            if (apiConfig && !apiConfig.hasConfig) {
+              onRequestAppSettings?.({
+                initialTab: 'model',
+                notice: buildApiConfigNotice(apiConfig.error),
+              });
+            }
+          } catch (error) {
+            console.error('Failed to check cowork API config:', error);
+          }
+        })();
+      }, 0);
+    };
+    void init();
+  }, [dispatch, onRequestAppSettings]);
+
+  const handleStartSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]) => {
+    // Prevent duplicate submissions
+    if (isStartingRef.current) return;
+    isStartingRef.current = true;
+    const requestId = ++startRequestIdRef.current;
+    pendingStartRef.current = { requestId, cancelled: false };
+    const isPendingStartCancelled = () => {
+      const pending = pendingStartRef.current;
+      return !pending || pending.requestId !== requestId || pending.cancelled;
+    };
+
+    try {
+      try {
+        const apiConfig = await coworkService.checkApiConfig();
+        if (apiConfig && !apiConfig.hasConfig) {
+          onRequestAppSettings?.({
+            initialTab: 'model',
+            notice: buildApiConfigNotice(apiConfig.error),
+          });
+          isStartingRef.current = false;
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to check cowork API config:', error);
+      }
+
+      const fallbackTitle = prompt.split('\n')[0].slice(0, 50) || '新会话';
+
+      // Capture active skill IDs before clearing them
+      const sessionSkillIds = [...activeSkillIds];
+
+      // Clear active skills and quick action selection after starting session
+      // so they don't persist to next session
+      dispatch(clearActiveSkills());
+      dispatch(clearSelection());
+
+      // {标记} P0-PROMPT-SLIM-FIX: 默认对话不再注入全局 auto-routing skills prompt。
+      // 真实技能能力只走角色绑定链路，由后端按 role skills.json 注入。
+      const combinedSystemPrompt = [skillPrompt, config.systemPrompt]
+        .filter(p => p?.trim())
+        .join('\n\n') || undefined;
+
+      // Start the actual session immediately with fallback title
+      const startedSession = await coworkService.startSession({
+        prompt,
+        title: fallbackTitle,
+        cwd: config.workingDirectory || undefined,
+        systemPrompt: combinedSystemPrompt,
+        activeSkillIds: sessionSkillIds,
+        imageAttachments,
+      });
+
+      // 启动失败时清理临时会话状态
+      if (!startedSession) {
+        return;
+      }
+
+      // Generate title in the background and update when ready
+      if (startedSession) {
+        coworkService.generateSessionTitle(prompt).then(generatedTitle => {
+          const betterTitle = generatedTitle?.trim();
+          if (betterTitle && betterTitle !== fallbackTitle) {
+            coworkService.renameSession(startedSession.id, betterTitle);
+          }
+        }).catch(error => {
+          console.error('Failed to generate cowork session title:', error);
+        });
+      }
+
+      // Stop immediately if user cancelled while startup request was in flight.
+      if (isPendingStartCancelled() && startedSession) {
+        await coworkService.stopSession(startedSession.id);
+      }
+    } finally {
+      if (pendingStartRef.current?.requestId === requestId) {
+        pendingStartRef.current = null;
+      }
+      isStartingRef.current = false;
+    }
+  };
+
+  const handleContinueSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]) => {
+    if (!currentSession) return;
+
+    console.log('[CoworkView] handleContinueSession called', {
+      hasImageAttachments: !!imageAttachments,
+      imageAttachmentsCount: imageAttachments?.length ?? 0,
+      imageAttachmentsNames: imageAttachments?.map(a => a.name),
+      imageAttachmentsBase64Lengths: imageAttachments?.map(a => a.base64Data.length),
+    });
+
+    // Capture active skill IDs before clearing
+    const sessionSkillIds = [...activeSkillIds];
+
+    // Clear active skills after capturing so they don't persist to next message
+    if (sessionSkillIds.length > 0) {
+      dispatch(clearActiveSkills());
+    }
+
+    // {标记} P0-PROMPT-SLIM-FIX: 续聊默认不再拉全局 auto-routing prompt，
+    // 只保留手选技能或后端角色绑定技能。
+    const combinedSystemPrompt = [skillPrompt, config.systemPrompt]
+      .filter(p => p?.trim())
+      .join('\n\n') || undefined;
+
+    await coworkService.continueSession({
+      sessionId: currentSession.id,
+      prompt,
+      systemPrompt: combinedSystemPrompt,
+      activeSkillIds: sessionSkillIds.length > 0 ? sessionSkillIds : undefined,
+      imageAttachments,
+    });
+  };
+
+  const handleStopSession = async () => {
+    if (!currentSession && pendingStartRef.current) {
+      pendingStartRef.current.cancelled = true;
+      return;
+    }
+    if (!currentSession) return;
+    if (pendingStartRef.current) {
+      pendingStartRef.current.cancelled = true;
+    }
+    await coworkService.stopSession(currentSession.id);
+  };
+
+  useEffect(() => {
+    const handleNewSession = () => {
+      dispatch(clearCurrentSession());
+      dispatch(clearSelection());
+      window.dispatchEvent(new CustomEvent('cowork:focus-input', {
+        detail: { clear: true },
+      }));
+    };
+    window.addEventListener('cowork:shortcut:new-session', handleNewSession);
+    return () => {
+      window.removeEventListener('cowork:shortcut:new-session', handleNewSession);
+    };
+  }, [dispatch]);
+
+  if (!isInitialized) {
+    return (
+      <div className="flex-1 h-full flex flex-col dark:bg-claude-darkBg bg-claude-bg">
+        <div className="draggable flex h-12 items-center justify-end px-4 border-b dark:border-claude-darkBorder border-claude-border shrink-0">
+          <WindowTitleBar inline />
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            {'加载中...'}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // When there's a current session, show the session detail view
+  if (currentSession) {
+    return (
+      <>
+        <CoworkSessionDetail
+          onManageSkills={() => onShowSkills?.()}
+          onContinue={handleContinueSession}
+          onStop={handleStopSession}
+          onNavigateHome={() => dispatch(clearCurrentSession())}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebar={onToggleSidebar}
+          onNewChat={onNewChat}
+          updateBadge={updateBadge}
+        />
+      </>
+    );
+  }
+
+  if (loadingSessionId) {
+    return (
+      <div className="flex-1 h-full flex flex-col dark:bg-claude-darkBg bg-claude-bg">
+        <div className="draggable flex h-12 items-center justify-end px-4 border-b dark:border-claude-darkBorder border-claude-border shrink-0">
+          <WindowTitleBar inline />
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-center px-6">
+            <div className="w-10 h-10 rounded-full border-2 border-claude-accent/30 border-t-claude-accent animate-spin" />
+            <div className="dark:text-claude-darkText text-claude-text text-sm font-medium">
+              正在打开对话...
+            </div>
+            <div className="dark:text-claude-darkTextSecondary text-claude-textSecondary text-xs">
+              会话加载完成后会自动进入详情页
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Home view - no current session
+  return (
+    <div className="flex-1 flex flex-col dark:bg-claude-darkBg bg-transparent h-full">
+      {/* Header */}
+      <div className="draggable flex h-12 items-center justify-between px-6 border-b dark:border-claude-darkBorder/50 border-claude-border/30 shrink-0 backdrop-blur-xl bg-gradient-pearl-header">
+        <div className="non-draggable h-8 flex items-center">
+          {isSidebarCollapsed && (
+            <div className={`flex items-center gap-1 mr-2 ${isMac ? 'pl-[68px]' : ''}`}>
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-xl dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover/50 dark:hover:bg-claude-darkSurfaceHover/50 transition-colors duration-200"
+              >
+                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
+              </button>
+              <button
+                type="button"
+                onClick={onNewChat}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-xl dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover/50 dark:hover:bg-claude-darkSurfaceHover/50 transition-colors duration-200"
+              >
+                <ComposeIcon className="h-4 w-4" />
+              </button>
+              {updateBadge}
+            </div>
+          )}
+          <div className="flex items-center gap-3">
+            <ModelSelector />
+          </div>
+        </div>
+        <WindowTitleBar inline />
+      </div>
+
+      {/* Main Content - 欢迎页自适应高度，不产生滚动 */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="mx-auto flex w-full max-w-3xl flex-col px-6 py-[42px] sm:py-[50px]">
+          <div className="relative mb-12 text-center sm:mb-14">
+            <div className="absolute inset-x-0 top-3 -z-10 mx-auto h-36 w-36 rounded-full bg-gradient-radial from-claude-accent/6 to-transparent blur-3xl" />
+            <div className="mx-auto inline-flex flex-col items-center">
+              <div className="relative inline-block">
+                <div className="absolute -inset-1 rounded-[36px] bg-gradient-to-r from-violet-300/38 via-claude-accent/46 to-violet-300/34 blur-md" />
+                <div className="absolute inset-0 rounded-[34px] bg-gradient-to-br from-claude-accent/30 via-violet-200/20 to-clay-soft/16 blur-sm" />
+                <div className="relative rounded-[32px] bg-gradient-to-br from-claude-accent/28 via-violet-100/42 to-clay-soft/20 p-1">
+                  <div className="rounded-[28px] bg-gradient-to-br from-white via-pearl-50 to-pearl-100 p-4 shadow-md dark:from-gray-800 dark:via-gray-900 dark:to-gray-950">
+                    <img src="logo.png" alt="logo" className="h-16 w-16" />
+                  </div>
+                </div>
+              </div>
+              <h2 className="mt-4 text-[28px] font-semibold tracking-[0.02em] text-claude-text dark:text-claude-darkText">
+                Uclaw
+              </h2>
+              <div className="mt-2 max-w-[680px] overflow-hidden text-ellipsis whitespace-nowrap text-sm leading-6 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                <span>🧠 自带跨多端记忆，一个对话框就够了</span>
+                <span className="mx-3 text-claude-accent/55">·</span>
+                <span>💬 微信钉钉飞书支持</span>
+                <span className="mx-3 text-claude-accent/55">·</span>
+                <span>🧩 兼容 OpenClaw Skills</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Prompt Input Area - 精致输入框容器 */}
+          <div className="mx-auto mb-5 flex w-full max-w-[900px] flex-wrap items-center justify-start gap-3 px-2">
+            {(() => {
+              const roleCards: { key: AgentRoleKey; label: string; icon: string; color: string; bg: string; border: string; activeTone: string; activeShadow: string }[] = [
+                { key: 'organizer', label: '浏览器助手', icon: '🌐', color: 'text-blue-600 dark:text-blue-400', bg: 'from-blue-500/10 to-blue-400/5', border: 'border-blue-400/30 hover:border-blue-400/60', activeTone: 'from-blue-400/22 to-blue-300/12 ring-blue-300/35 border-blue-400/55', activeShadow: 'shadow-[0_10px_22px_rgba(96,165,250,0.22)]' },
+                { key: 'writer', label: '文字撰写员', icon: '✍️', color: 'text-emerald-600 dark:text-emerald-400', bg: 'from-emerald-500/10 to-emerald-400/5', border: 'border-emerald-400/30 hover:border-emerald-400/60', activeTone: 'from-emerald-400/22 to-emerald-300/12 ring-emerald-300/35 border-emerald-400/55', activeShadow: 'shadow-[0_10px_22px_rgba(52,211,153,0.20)]' },
+                { key: 'designer', label: '美术编辑师', icon: '🎨', color: 'text-purple-600 dark:text-purple-400', bg: 'from-purple-500/10 to-purple-400/5', border: 'border-purple-400/30 hover:border-purple-400/60', activeTone: 'from-purple-400/24 to-purple-300/14 ring-purple-300/35 border-purple-400/55', activeShadow: 'shadow-[0_10px_22px_rgba(192,132,252,0.22)]' },
+                { key: 'analyst', label: '数据分析师', icon: '📊', color: 'text-amber-600 dark:text-amber-400', bg: 'from-amber-500/10 to-amber-400/5', border: 'border-amber-400/30 hover:border-amber-400/60', activeTone: 'from-amber-400/24 to-amber-300/14 ring-amber-300/35 border-amber-400/55', activeShadow: 'shadow-[0_10px_22px_rgba(251,191,36,0.20)]' },
+              ];
+              const currentModel = selectedModelRef.current;
+              const currentRoleKey = currentModel?.providerKey && AGENT_ROLE_ORDER.includes(currentModel.providerKey as AgentRoleKey) ? currentModel.providerKey as AgentRoleKey : 'organizer';
+              return roleCards.map(card => {
+                const isActive = card.key === currentRoleKey;
+                const roleModel = availableModelsRef.current.find(m => m.providerKey === card.key);
+                if (!roleModel) return null;
+                return (
+                  <button
+                    key={card.key}
+                    type="button"
+                    onClick={() => {
+                      dispatch(setSelectedModel(roleModel));
+                      coworkServiceForRole.updateConfig({ agentRoleKey: card.key }).catch(() => {});
+                    }}
+                    className={`inline-flex min-h-10 items-center justify-start gap-2.5 rounded-full border bg-gradient-to-r px-4 py-2 text-sm transition-all duration-200 ${card.bg} ${card.border} ${isActive ? `scale-[1.04] ring-2 ${card.activeTone} ${card.activeShadow}` : 'opacity-90 hover:scale-[1.02] hover:shadow-sm'} `}
+                  >
+                    <span className={`text-[18px] transition-transform duration-200 ${isActive ? 'scale-110' : ''}`}>{card.icon}</span>
+                    <span className={`font-medium ${card.color}`}>{card.label}</span>
+                  </button>
+                );
+              });
+            })()}
+          </div>
+
+          <div className="relative mx-auto w-full max-w-[900px]">
+            <div className="relative group">
+              <div className="relative rounded-[28px] border border-white/55 bg-gradient-to-br from-white/92 via-pearl-50/88 to-[#f3e8de]/92 p-2 shadow-[0_12px_32px_rgba(140,116,96,0.12)] backdrop-blur-xl dark:border-white/10 dark:from-gray-800/92 dark:via-gray-900/84 dark:to-gray-950/92">
+                <div className="px-3 pt-3">
+                  {latestVisibleSession ? (
+                    <div className="mb-3 flex items-center gap-3 rounded-2xl border border-violet-200/60 bg-violet-50/60 px-3.5 py-2.5 dark:border-violet-400/15 dark:bg-violet-400/[0.06] sm:rounded-full">
+                      <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+                        <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">
+                          最近一个对话
+                        </span>
+                        <span className="mx-2 text-violet-400/70 dark:text-violet-300/40">·</span>
+                        <span className="inline-block max-w-full align-bottom truncate text-xs leading-5 text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                          摘要：{buildSessionPreviewText(latestVisibleSession)}
+                        </span>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => { void coworkService.loadSession(latestVisibleSession.id); }}
+                          className="inline-flex items-center text-xs font-medium text-violet-700 transition-colors hover:text-violet-800 hover:underline dark:text-violet-300 dark:hover:text-violet-200"
+                        >
+                          点击继续
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onShowSessionHistory?.('all')}
+                          className="inline-flex items-center text-xs text-claude-textSecondary transition-colors hover:text-claude-text hover:underline dark:text-claude-darkTextSecondary dark:hover:text-claude-darkText"
+                        >
+                          所有记录
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mb-3">
+                      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-claude-textSecondary dark:text-claude-darkTextSecondary">
+                        Start Here
+                      </div>
+                      <div className="mt-1 text-[15px] font-medium leading-6 text-claude-text dark:text-claude-darkText">
+                        给小伙伴分配任务，或直接开始一段对话
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-[24px] bg-gradient-to-br from-white/72 via-pearl-50/58 to-[#f7efe8]/66 dark:bg-black/10">
+                  <CoworkPromptInput
+                    ref={promptInputRef}
+                    onSubmit={handleStartSession}
+                    onStop={handleStopSession}
+                    isStreaming={isStreaming}
+                    placeholder={'分配一个任务或提问任何问题'}
+                    size="large"
+                    workingDirectory={config.workingDirectory}
+                    onWorkingDirectoryChange={async (dir: string) => {
+                      await coworkService.updateConfig({ workingDirectory: dir });
+                    }}
+                    showFolderSelector={true}
+                    onManageSkills={() => onShowSkills?.()}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => onRequestAppSettings?.({ initialTab: 'clawApi' })}
+              className="relative inline-flex items-center gap-2 rounded-full border border-amber-200/70 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-2 text-sm font-medium text-amber-700 shadow-sm transition-transform duration-200 hover:scale-[1.02] dark:border-amber-400/20 dark:from-amber-400/[0.10] dark:to-orange-400/[0.08] dark:text-amber-200"
+            >
+              <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-semibold leading-none text-white shadow-sm">
+                热
+              </span>
+              <span>🪙</span>
+              <span>特价 API</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onShowSkills?.()}
+              className="inline-flex items-center gap-2 rounded-full border border-violet-200/70 bg-gradient-to-r from-violet-50 to-fuchsia-50 px-4 py-2 text-sm font-medium text-violet-700 shadow-sm transition-transform duration-200 hover:scale-[1.02] dark:border-violet-400/20 dark:from-violet-400/[0.10] dark:to-fuchsia-400/[0.08] dark:text-violet-200"
+            >
+              <span>💡</span>
+              <span>使用技巧与指南</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onRequestAppSettings?.({ initialTab: 'resources' })}
+              className="inline-flex items-center gap-2 rounded-full border border-sky-200/70 bg-gradient-to-r from-sky-50 to-cyan-50 px-4 py-2 text-sm font-medium text-sky-700 shadow-sm transition-transform duration-200 hover:scale-[1.02] dark:border-sky-400/20 dark:from-sky-400/[0.10] dark:to-cyan-400/[0.08] dark:text-sky-200"
+            >
+              <span>⬇️</span>
+              <span>资源下载</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default CoworkView;

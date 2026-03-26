@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "xhs-mcp": {
+      "command": "node",
+      "args": ["${SKILL_PATH}/dist/xhs-mcp.js", "mcp"],
+      "env": {
+        "XHS_ENABLE_LOGGING": "true"
+      }
+    }
+  }
+}
