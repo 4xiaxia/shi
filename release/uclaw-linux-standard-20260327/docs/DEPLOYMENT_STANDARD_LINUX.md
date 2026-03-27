@@ -21,6 +21,17 @@
 
 If your Zeabur log shows `COPY --from=build /src/dist /`, the platform is looking for a static-site output folder that this repository does not produce
 
+## Render
+
+- Deploy this repo as a `Web Service`, not a static site
+- Use build command `npm run build`
+- Use start command `npm start`
+- Health check path: `/health`
+- If you continue using local SQLite, keep the service at a single instance
+- If you use a persistent disk for `.uclaw`, mount it inside the project root and keep `UCLAW_DATA_PATH` inside project root, for example:
+  - `UCLAW_DATA_PATH=/opt/render/project/src/.uclaw`
+- Do not mount data to a path outside project root and then point `UCLAW_DATA_PATH` there, because `deploy:check` and runtime guards will reject it
+
 ## Why not `yarn`
 
 - Repo only ships `package-lock.json`
@@ -35,7 +46,7 @@ These are required for standard unattended deployment:
 
 - `NODE_ENV=production`
 - `PORT=3001` or platform-injected port
-- `CORS_ORIGIN=https://your-domain.example.com`
+- `CORS_ORIGIN=https://your-domain.example.com` or the explicit platform public URL
 - `UCLAW_DATA_PATH=.uclaw`
 - `UCLAW_API_BASE_URL`
 - `UCLAW_API_KEY`
@@ -86,5 +97,6 @@ curl http://127.0.0.1:3001/health
 ## Notes
 
 - `CORS_ORIGIN=*` is not accepted by `deploy:check` in standard production mode
+- Single-service deployment still needs an explicit public origin; use the final external URL, not `*`
 - `UCLAW_DATA_PATH` must remain inside project root
 - Run `npm run build` before first start or after upgrades

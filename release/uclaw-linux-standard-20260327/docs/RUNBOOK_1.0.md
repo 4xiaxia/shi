@@ -80,8 +80,9 @@ UCLAW_DEFAULT_MODEL=gpt-5.4
 
 - `NODE_ENV`：生产环境写 `production`
 - `PORT`：平台通常会覆盖注入，不需要改成别的固定值
-- `CORS_ORIGIN`：单体部署可先 `*`，前后端分离时改成明确域名
-- 前后端分离的生产环境不要继续保留 `CORS_ORIGIN=*`，因为当前服务端启用了 `credentials: true`
+- `CORS_ORIGIN`：标准生产部署必须写明确外部访问源，不能写 `*`
+- 如果是同域单体部署，也写最终对外 URL，例如 `https://your-app.onrender.com`
+- 如果是反向代理/端口映射部署，就写用户实际访问到的公开入口，不要写容器内回环地址
 - `UCLAW_DATA_PATH`：推荐写 `.uclaw`；不要写到项目根目录外
 - `UCLAW_API_BASE_URL`：模型 API 根地址
 - `UCLAW_API_KEY`：模型 API 密钥
@@ -100,6 +101,7 @@ UCLAW_DEFAULT_MODEL=gpt-5.4
 - 可通过 `UCLAW_DATA_PATH` 或 `--data-dir` 指定
 - 该路径必须在项目根目录内部；如果指到项目外部，运行时会自动忽略并回退默认目录
 - 自动化部署若需要持久化，请把磁盘挂载到项目目录里，再把 `UCLAW_DATA_PATH` 设成该挂载目录
+- Render 如果继续使用本地 SQLite，请把持久化目录挂到项目根内，例如 `/opt/render/project/src/.uclaw`
 
 示例：
 
