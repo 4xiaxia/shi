@@ -39,10 +39,15 @@ delivery-mainline-1.0-clean
 ├─ src/
 ├─ SKILLs/
 └─ docs/
+   ├─ DOCS_INDEX.md
    ├─ AGENTS.md
+   ├─ DB_API_TRUNK_WALK_2026-03-27.md
    ├─ DEPLOYMENT_STANDARD_LINUX.md
    ├─ MAINLINE_1.0_BOUNDARY.md
+   ├─ PAGE_SERVICE_ROUTE_MAP_2026-03-27.md
+   ├─ PROJECT_QUICK_GUIDE_2026-03-27.md
+   ├─ PROJECT_RENOVATION_BLUEPRINT_2026-03-27.md
    ├─ PURE_PACKAGE_FILETREE.md
    ├─ RUNBOOK_1.0.md
-   └─ REPAIR_CHECKLIST_2026-03-25_06-07.md
+   └─ UCLAW_GUIDE_HANDBOOK_2026-03-27.md
 ```

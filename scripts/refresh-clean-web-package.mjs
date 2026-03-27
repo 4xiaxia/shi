@@ -43,7 +43,13 @@ const scriptFiles = [
 
 const copiedDocFiles = [
   'AGENTS.md',
-  'REPAIR_CHECKLIST_2026-03-25_06-07.md',
+  'DEPLOYMENT_STANDARD_LINUX.md',
+  'DB_API_TRUNK_WALK_2026-03-27.md',
+  'PAGE_SERVICE_ROUTE_MAP_2026-03-27.md',
+  'PROJECT_QUICK_GUIDE_2026-03-27.md',
+  'PROJECT_RENOVATION_BLUEPRINT_2026-03-27.md',
+  'UCLAW_GUIDE_HANDBOOK_2026-03-27.md',
+  'DOCS_INDEX.md',
 ];
 
 async function ensureDir(dirPath) {
@@ -119,11 +125,17 @@ npm run start
 
 文档入口：
 
+- \`docs/DOCS_INDEX.md\`
+- \`docs/UCLAW_GUIDE_HANDBOOK_2026-03-27.md\`
+- \`docs/PROJECT_QUICK_GUIDE_2026-03-27.md\`
+- \`docs/PROJECT_RENOVATION_BLUEPRINT_2026-03-27.md\`
 - \`docs/AGENTS.md\`
+- \`docs/PAGE_SERVICE_ROUTE_MAP_2026-03-27.md\`
+- \`docs/DB_API_TRUNK_WALK_2026-03-27.md\`
+- \`docs/DEPLOYMENT_STANDARD_LINUX.md\`
 - \`docs/MAINLINE_1.0_BOUNDARY.md\`
 - \`docs/RUNBOOK_1.0.md\`
 - \`docs/PURE_PACKAGE_FILETREE.md\`
-- \`docs/REPAIR_CHECKLIST_2026-03-25_06-07.md\`
 `;
 
 const boundaryDoc = `
@@ -240,11 +252,17 @@ delivery-mainline-1.0-clean
 ├─ src/
 ├─ SKILLs/
 └─ docs/
+   ├─ DOCS_INDEX.md
    ├─ AGENTS.md
+   ├─ DB_API_TRUNK_WALK_2026-03-27.md
+   ├─ DEPLOYMENT_STANDARD_LINUX.md
    ├─ MAINLINE_1.0_BOUNDARY.md
+   ├─ PAGE_SERVICE_ROUTE_MAP_2026-03-27.md
+   ├─ PROJECT_QUICK_GUIDE_2026-03-27.md
+   ├─ PROJECT_RENOVATION_BLUEPRINT_2026-03-27.md
    ├─ PURE_PACKAGE_FILETREE.md
    ├─ RUNBOOK_1.0.md
-   └─ REPAIR_CHECKLIST_2026-03-25_06-07.md
+   └─ UCLAW_GUIDE_HANDBOOK_2026-03-27.md
 \`\`\`
 `;
 
