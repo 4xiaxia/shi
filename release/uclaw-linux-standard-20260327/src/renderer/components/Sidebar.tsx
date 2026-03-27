@@ -1,0 +1,399 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../store';
+import { coworkService } from '../services/cowork';
+import { getPlatform } from '../utils/platform';
+import ComposeIcon from './icons/ComposeIcon';
+import ConnectorIcon from './icons/ConnectorIcon';
+import SearchIcon from './icons/SearchIcon';
+import ClockIcon from './icons/ClockIcon';
+import PuzzleIcon from './icons/PuzzleIcon';
+import SidebarToggleIcon from './icons/SidebarToggleIcon';
+import TrashIcon from './icons/TrashIcon';
+import { ExclamationTriangleIcon, ShoppingBagIcon, PhotoIcon, LinkIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
+import { StarIcon } from '@heroicons/react/24/solid';
+import { getTouchButtonClass } from '../../shared/mobileUi';
+
+interface SidebarProps {
+  onShowSettings: () => void;
+  onShowLogin?: () => void;
+  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'mcp' | 'employeeStore' | 'resourceShare' | 'freeImageGen' | 'sessionHistory' | 'room';
+  onShowSkills: () => void;
+  onShowCowork: () => void;
+  onShowScheduledTasks: () => void;
+  onShowSessionHistory: () => void;
+  onShowMcp: () => void;
+  onShowEmployeeStore: () => void;
+  onShowResourceShare: () => void;
+  onShowFreeImageGen: () => void;
+  onShowRoom: () => void;
+  onNewChat: () => void;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
+  updateBadge?: React.ReactNode;
+}
+
+/* ── 辅助区按钮图标映射 ── */
+const EXTRA_ICON_MAP: Record<string, React.ReactNode> = {
+  resourceShare: <LinkIcon className="h-4 w-4" />,
+  freeImageGen: <PhotoIcon className="h-4 w-4" />,
+};
+
+/* ── 辅助区按钮配色 ── */
+const EXTRA_ITEMS: {
+  key: string;
+  label: string;
+  iconColor: string;
+  activeBg: string;
+  handler: 'onShowResourceShare' | 'onShowFreeImageGen';
+}[] = [
+  { key: 'resourceShare', label: '提示词大全', iconColor: 'text-blue-500', activeBg: 'from-blue-500/15 to-blue-500/5', handler: 'onShowResourceShare' },
+  { key: 'freeImageGen', label: '免费生图', iconColor: 'text-pink-500', activeBg: 'from-pink-500/15 to-pink-500/5', handler: 'onShowFreeImageGen' },
+];
+
+const Sidebar: React.FC<SidebarProps> = ({
+  onShowSettings,
+  activeView,
+  onShowSkills,
+  onShowCowork: _onShowCowork,
+  onShowScheduledTasks,
+  onShowSessionHistory,
+  onShowMcp,
+  onShowEmployeeStore,
+  onShowResourceShare,
+  onShowFreeImageGen,
+  onShowRoom,
+  onNewChat,
+  isCollapsed,
+  onToggleCollapse,
+  updateBadge,
+}) => {
+  const sessions = useSelector((state: RootState) => state.cowork.sessions);
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = useState(false);
+  const isMac = getPlatform() === 'darwin';
+
+  const handlerMap: Record<string, () => void> = {
+    onShowResourceShare,
+    onShowFreeImageGen,
+    onShowEmployeeStore,
+  };
+  const primaryNavItems: Array<{
+    key: SidebarProps['activeView'];
+    label: string;
+    description: string;
+    icon: React.ReactNode;
+    onClick: () => void;
+    featured?: boolean;
+  }> = [
+    { key: 'cowork', label: '新建任务', description: '回到当前对话主线。', icon: <ComposeIcon className="h-4 w-4" />, onClick: onNewChat },
+    { key: 'sessionHistory', label: '对话记录', description: '查看最近会话和足迹。', icon: <SearchIcon className="h-4 w-4" />, onClick: onShowSessionHistory },
+    { key: 'room', label: 'Room', description: '大家的小乐园和实验壳。', icon: <ChatBubbleLeftRightIcon className="h-4 w-4" />, onClick: onShowRoom, featured: true },
+  ];
+  const workspaceNavItems: Array<{
+    key: SidebarProps['activeView'];
+    label: string;
+    description: string;
+    icon: React.ReactNode;
+    onClick: () => void;
+    featured?: boolean;
+  }> = [
+    { key: 'scheduledTasks', label: '定时任务', description: '让日常工作自己跑。', icon: <ClockIcon className="h-4 w-4" />, onClick: onShowScheduledTasks },
+    { key: 'skills', label: '技能 skills', description: '按需装配能力。', icon: <PuzzleIcon className="h-4 w-4" />, onClick: onShowSkills },
+    { key: 'mcp', label: '插件 MCP', description: '工具连接口。', icon: <ConnectorIcon className="h-4 w-4" />, onClick: onShowMcp },
+    { key: 'employeeStore', label: 'Agent 商店', description: '新的伙伴和角色入口。', icon: <ShoppingBagIcon className="h-4 w-4" />, onClick: onShowEmployeeStore, featured: true },
+  ];
+
+  useEffect(() => {
+    if (!isCollapsed) return;
+    setIsBatchMode(false);
+    setSelectedIds(new Set());
+    setShowBatchDeleteConfirm(false);
+  }, [isCollapsed]);
+
+  const handleExitBatchMode = useCallback(() => {
+    setIsBatchMode(false);
+    setSelectedIds(new Set());
+    setShowBatchDeleteConfirm(false);
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    setSelectedIds(prev => {
+      if (prev.size === sessions.length) {
+        return new Set();
+      }
+      return new Set(sessions.map(s => s.id));
+    });
+  }, [sessions]);
+
+  const handleBatchDeleteClick = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    setShowBatchDeleteConfirm(true);
+  }, [selectedIds.size]);
+
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    await coworkService.deleteSessions(ids);
+    handleExitBatchMode();
+  }, [selectedIds, handleExitBatchMode]);
+
+  /* ── 主导航按钮样式 ── */
+  const navBtnClass = (isActive: boolean, tone: 'primary' | 'secondary') =>
+    `group w-full text-left ${getTouchButtonClass(`relative rounded-2xl transition-all duration-200 ${
+      tone === 'primary'
+        ? 'px-3 py-3'
+        : 'px-2.5 py-2.5'
+    }`)} ${
+      isActive
+        ? 'bg-white/85 dark:bg-white/[0.1] text-violet-600 dark:text-violet-400 shadow-[0_8px_20px_rgba(203,174,150,0.16)] dark:shadow-[0_6px_18px_rgba(0,0,0,0.28)] border border-white/70 dark:border-white/10'
+        : 'dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/80 hover:text-claude-text dark:hover:text-claude-darkText hover:bg-white/55 dark:hover:bg-white/[0.06] border border-transparent'
+    }`;
+
+  const sectionShellClass = 'rounded-[22px] border border-white/60 bg-white/45 p-2 shadow-[0_10px_24px_rgba(203,174,150,0.08)] dark:border-white/10 dark:bg-white/[0.03]';
+
+  return (
+    <aside
+      className={`sidebar-pearl dark:bg-claude-darkSurfaceMuted flex flex-col sidebar-transition overflow-hidden ${
+        isCollapsed
+          ? 'w-0 min-w-0'
+          : 'w-[30%] min-w-[270px] max-w-[410px] shrink-0'
+      }`}
+    >
+      {/* ── 顶部：主导航 ── */}
+      <div className="pt-3 pb-3">
+        <div className="draggable sidebar-header-drag h-8 flex items-center justify-between px-3">
+          <div className={`${isMac ? 'pl-[68px]' : ''}`}>
+            {updateBadge}
+          </div>
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className={getTouchButtonClass('non-draggable inline-flex items-center justify-center rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors')}
+            aria-label={isCollapsed ? '展开' : '收起'}
+          >
+            <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
+          </button>
+        </div>
+        <div className="mt-3 space-y-3 px-3">
+          <div>
+            <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] dark:text-claude-darkTextSecondary/85 text-claude-textSecondary/85">
+              {'主路径'}
+            </div>
+            <div className={sectionShellClass}>
+              {primaryNavItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={item.onClick}
+                  className={navBtnClass(activeView === item.key, 'primary')}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white/75 text-current dark:bg-white/[0.08]">
+                      {item.icon}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="block text-[15px] font-semibold tracking-[-0.01em] dark:text-claude-darkText text-[#4E453D]">
+                          {item.label}
+                        </span>
+                        {item.featured ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/70 bg-amber-50/90 px-2 py-0.5 text-[10px] font-semibold tracking-[0.08em] text-amber-700 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-200">
+                            <StarIcon className="h-3 w-3" />
+                            {'特色'}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="mt-1 block text-[11px] leading-5 dark:text-claude-darkTextSecondary/72 text-[#8F8276]">
+                        {item.description}
+                      </span>
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] dark:text-claude-darkTextSecondary/85 text-claude-textSecondary/85">
+              {'工作台'}
+            </div>
+            <div className={sectionShellClass}>
+              {workspaceNavItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={item.onClick}
+                  className={navBtnClass(activeView === item.key, 'secondary')}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/65 text-current dark:bg-white/[0.06]">
+                      {item.icon}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        <span className="block text-[13px] font-semibold tracking-[-0.01em] dark:text-claude-darkText text-[#51473F]">
+                          {item.label}
+                        </span>
+                        {item.featured ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/70 bg-amber-50/90 px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.08em] text-amber-700 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-200">
+                            <StarIcon className="h-2.5 w-2.5" />
+                            {'特色'}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="mt-0.5 block text-[10px] leading-5 dark:text-claude-darkTextSecondary/70 text-[#938678]">
+                        {item.description}
+                      </span>
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 撑开中间空间，把辅助区推到底部 */}
+      <div className="flex-1" />
+
+      {/* ── 底部：辅助区 + 设置 ── */}
+      {isBatchMode ? (
+        <div className="px-3 pb-3 pt-1 flex items-center justify-between">
+          <label className="flex items-center gap-2 cursor-pointer text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+            <input
+              type="checkbox"
+              checked={selectedIds.size === sessions.length && sessions.length > 0}
+              onChange={handleSelectAll}
+              className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 accent-claude-accent cursor-pointer"
+            />
+            {'全选'}
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleBatchDeleteClick}
+              disabled={selectedIds.size === 0}
+              className={`inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                selectedIds.size > 0
+                  ? 'bg-red-500 hover:bg-red-600 text-white'
+                  : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+              {selectedIds.size > 0 ? `${selectedIds.size}` : ''}
+            </button>
+            <button
+              type="button"
+              onClick={handleExitBatchMode}
+              className="px-3 py-1.5 text-sm font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+            >
+              {'取消'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="px-3 pb-3 pt-1 space-y-2">
+          {/* ── 辅助入口：彩色图标 + 红点"热"标签 ── */}
+          <div>
+            <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] dark:text-claude-darkTextSecondary/85 text-claude-textSecondary/85">
+              {'灵感角'}
+            </div>
+            <div className={sectionShellClass}>
+              {EXTRA_ITEMS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => { handlerMap[item.handler](); }}
+                  className={`relative group w-full ${getTouchButtonClass('inline-flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-medium transition-all duration-200')} ${
+                    activeView === item.key
+                      ? `bg-white/80 dark:bg-white/[0.1] ${item.iconColor} shadow-[0_1px_4px_rgba(0,0,0,0.08)] dark:shadow-[0_1px_4px_rgba(0,0,0,0.3)] border border-white/60 dark:border-white/10`
+                      : 'dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/80 hover:text-claude-text dark:hover:text-claude-darkText hover:bg-white/50 dark:hover:bg-white/[0.06]'
+                  }`}
+                >
+                  <span className={activeView === item.key ? '' : item.iconColor}>
+                    {EXTRA_ICON_MAP[item.key]}
+                  </span>
+                  <span className="text-[12px] font-semibold tracking-[-0.01em] dark:text-claude-darkText text-[#51473F]">
+                    {item.label}
+                  </span>
+                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-400/80 flex-shrink-0" />
+                </button>
+              ))}
+              <a
+                href="https://uclaw.bolt.host/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`relative group w-full ${getTouchButtonClass('inline-flex items-center gap-2 rounded-xl px-2.5 py-2 text-[13px] font-medium transition-colors duration-200')} dark:text-claude-darkTextSecondary/70 text-claude-textSecondary/80 hover:text-claude-text dark:hover:text-claude-darkText hover:bg-claude-surfaceHover/40 dark:hover:bg-claude-darkSurfaceHover/40`}
+              >
+                <span className="text-violet-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-4 w-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+                  </svg>
+                </span>
+                <span className="text-[12px] font-semibold tracking-[-0.01em] dark:text-claude-darkText text-[#51473F]">
+                  {'超IN题词库'}
+                </span>
+                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-400/80 flex-shrink-0" />
+              </a>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onShowSettings()}
+            className={`w-full ${getTouchButtonClass('inline-flex items-center gap-2 rounded-2xl border border-white/60 bg-white/45 px-3 py-2.5 text-sm font-medium dark:border-white/10 dark:bg-white/[0.03] dark:text-claude-darkTextSecondary text-claude-textSecondary hover:text-claude-text dark:hover:text-claude-darkText hover:bg-white/55 dark:hover:bg-white/[0.06] transition-colors')}`}
+            aria-label={'设置'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M14 17H5" /><path d="M19 7h-9" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
+            {'设置'}
+          </button>
+        </div>
+      )}
+
+      {/* Batch Delete Confirmation Modal */}
+      {showBatchDeleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowBatchDeleteConfirm(false)}
+        >
+          <div
+            className="w-full max-w-sm mx-4 dark:bg-claude-darkSurface bg-claude-surface rounded-2xl shadow-xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 px-5 py-4">
+              <div className="p-2 rounded-full bg-red-100 dark:bg-red-900/30">
+                <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-500" />
+              </div>
+              <h2 className="text-base font-semibold dark:text-claude-darkText text-claude-text">
+                {'确认批量删除'}
+              </h2>
+            </div>
+            <div className="px-5 pb-4">
+              <p className="text-sm dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {'确定要删除选中的 {count} 个任务吗？此操作不可撤销。'.replace('{count}', String(selectedIds.size))}
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t dark:border-claude-darkBorder border-claude-border">
+              <button
+                onClick={() => setShowBatchDeleteConfirm(false)}
+                className="px-4 py-2 text-sm font-medium rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+              >
+                {'取消'}
+              </button>
+              <button
+                onClick={handleBatchDelete}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors"
+              >
+                {'删除'} ({selectedIds.size})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+};
+
+export default Sidebar;

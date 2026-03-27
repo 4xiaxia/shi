@@ -1,0 +1,17 @@
+{
+  "name": "daily-memory-extraction",
+  "version": "1.0.0",
+  "description": "Daily memory extraction and file archiving task",
+  "main": "dailyMemoryExtraction.ts",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "extraction",
+    "archiving",
+    "daily",
+    "identity"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "scripts": {}
+}
