@@ -19,6 +19,7 @@ SKILLs/**/node_modules/
 .playwright-mcp/
 .playwright-browsers/
 .uclaw/
+release/
 
 # Temp files
 .cowork-temp/
@@ -28,6 +29,7 @@ nul
 __pycache__/
 
 # Build artifacts
+server/public/
 server/dist/
 server/**/*.js
 server/**/*.js.map
