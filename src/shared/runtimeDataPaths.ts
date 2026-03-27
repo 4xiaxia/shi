@@ -14,6 +14,11 @@ function looksLikeProjectRoot(candidatePath: string): boolean {
     && fs.existsSync(path.join(candidatePath, 'server'));
 }
 
+function looksLikeWebMainlineRoot(candidatePath: string): boolean {
+  return looksLikeProjectRoot(candidatePath)
+    && fs.existsSync(path.join(candidatePath, 'vite.config.web.ts'));
+}
+
 function findProjectRootFrom(startPath?: string): string | null {
   if (!startPath?.trim()) {
     return null;
@@ -28,9 +33,14 @@ function findProjectRootFrom(startPath?: string): string | null {
     return null;
   }
 
+  let fallbackProjectRoot: string | null = null;
+
   for (let depth = 0; depth < 10; depth += 1) {
-    if (looksLikeProjectRoot(current)) {
+    if (looksLikeWebMainlineRoot(current)) {
       return current;
+    }
+    if (!fallbackProjectRoot && looksLikeProjectRoot(current)) {
+      fallbackProjectRoot = current;
     }
     const parent = path.dirname(current);
     if (parent === current) {
@@ -39,7 +49,7 @@ function findProjectRootFrom(startPath?: string): string | null {
     current = parent;
   }
 
-  return null;
+  return fallbackProjectRoot;
 }
 
 function resolveConfiguredProjectRoot(): string {
