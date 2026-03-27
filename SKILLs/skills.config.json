@@ -17,7 +17,6 @@
     "using-superpowers": { "order": 140, "enabled": true },
     "web-search": { "order": 150, "enabled": true },
     "writing-skills": { "order": 160, "enabled": true },
-    "xhs-render": { "order": 180, "enabled": true },
     "xlsx": { "order": 190, "enabled": true }
   }
 }
