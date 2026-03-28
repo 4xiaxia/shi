@@ -451,6 +451,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
   const [testMode, setTestMode] = useState(false);
   const [_logoClickCount, _setLogoClickCount] = useState(0);
   const [_testModeUnlocked, setTestModeUnlocked] = useState(false);
+  const [showWorkspacePath, setShowWorkspacePath] = useState(false);
+  const [showEnvSyncTargetPath, setShowEnvSyncTargetPath] = useState(false);
+  const [showActiveRoleRuntimePaths, setShowActiveRoleRuntimePaths] = useState(false);
 
   // Workspace info (web build)
   const [workspacePath, setWorkspacePath] = useState<string>('');
@@ -1400,23 +1403,45 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
             {/* Workspace Path Section (web build) */}
             {workspacePath && (
               <div>
-                <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-3">
-                  {'工作目录'}
-                </h4>
-                <div className="text-sm dark:text-claude-darkSecondaryText text-claude-textSecondary break-all font-mono">
-                  {workspacePath}
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                    {'当前工作目录'}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowWorkspacePath((value) => !value)}
+                    className="px-2.5 py-1 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                  >
+                    {showWorkspacePath ? '收起路径' : '查看路径'}
+                  </button>
                 </div>
+                {showWorkspacePath && (
+                  <div className="mt-3 text-sm dark:text-claude-darkSecondaryText text-claude-textSecondary break-all font-mono">
+                    {workspacePath}
+                  </div>
+                )}
               </div>
             )}
 
             {envSyncTargetPath && (
               <div>
-                <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text mb-3">
-                  {'环境同步目标文件'}
-                </h4>
-                <div className="text-sm dark:text-claude-darkSecondaryText text-claude-textSecondary break-all font-mono">
-                  {envSyncTargetPath}
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                    {'环境同步文件'}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowEnvSyncTargetPath((value) => !value)}
+                    className="px-2.5 py-1 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary hover:bg-claude-surfaceHover dark:hover:bg-claude-darkSurfaceHover transition-colors"
+                  >
+                    {showEnvSyncTargetPath ? '收起路径' : '查看路径'}
+                  </button>
                 </div>
+                {showEnvSyncTargetPath && (
+                  <div className="mt-3 text-sm dark:text-claude-darkSecondaryText text-claude-textSecondary break-all font-mono">
+                    {envSyncTargetPath}
+                  </div>
+                )}
                 <div className="mt-2 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                   {envSyncTargetExists === false
                     ? '当前目标文件不存在，设置保存时不会回写到环境文件。'
@@ -1698,10 +1723,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                         {'先配置对话文件缓存目录，系统才会写入每日归档。'}
                       </div>
                     ) : conversationBackupStamp ? (
-                      <div className="mt-1 space-y-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary break-all">
+                      <div className="mt-1 space-y-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
                         <div>{`日期目录：${conversationBackupStamp}`}</div>
-                        <div>{`归档路径：${conversationBackupDir}`}</div>
-                        <div>{`Manifest：${conversationBackupManifestPath}`}</div>
+                        <div>{'需要时可用下方按钮直接打开归档目录或定位清单文件。'}</div>
                       </div>
                     ) : (
                       <div className="mt-1 text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
@@ -2046,16 +2070,25 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                         {'角色文件'}
                       </div>
                       <div className="mt-1 text-xs leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                        {'这里只保留当前角色的项目内文件入口，方便直接打开对应目录和索引。'}
+                        {'这里只保留当前角色的资料入口，方便直接打开相关目录；具体位置默认先隐藏。'}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => { void handleOpenShellPath(activeRoleRuntimePaths.roleRoot, 'open'); }}
-                      className="inline-flex items-center rounded-xl border px-3 py-1.5 text-xs font-medium dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
-                    >
-                      {'打开角色目录'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowActiveRoleRuntimePaths((value) => !value)}
+                        className="inline-flex items-center rounded-xl border px-3 py-1.5 text-xs font-medium dark:border-claude-darkBorder border-claude-border dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                      >
+                        {showActiveRoleRuntimePaths ? '收起位置' : '查看位置'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { void handleOpenShellPath(activeRoleRuntimePaths.roleRoot, 'open'); }}
+                        className="inline-flex items-center rounded-xl border px-3 py-1.5 text-xs font-medium dark:border-claude-darkBorder border-claude-border dark:text-claude-darkText text-claude-text dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                      >
+                        {'打开角色目录'}
+                      </button>
+                    </div>
                   </div>
 
                   {[
@@ -2074,7 +2107,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                             {entry.label}
                           </div>
                           <div className="mt-1 break-all font-mono text-[11px] leading-5 dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                            {entry.path}
+                            {showActiveRoleRuntimePaths ? entry.path : '位置已隐藏；需要时可点右侧按钮直接打开。'}
                           </div>
                         </div>
                         <button

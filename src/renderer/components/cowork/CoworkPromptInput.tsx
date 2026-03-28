@@ -683,7 +683,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               <div
                 key={attachment.path}
                 className="inline-flex items-center gap-2 rounded-full border border-white/20 dark:border-white/10 bg-white/60 dark:bg-white/5 px-3 py-1.5 text-sm dark:text-white/90 text-[#5A5248] backdrop-blur-sm max-w-full shadow-sm transition-colors hover:bg-white/70 dark:hover:bg-white/8"
-                title={attachment.path}
+                title={attachment.name}
               >
                 {attachment.isImage ? (
                   <PhotoIcon className="h-4 w-4 flex-shrink-0 text-[#9A9085]/80" />

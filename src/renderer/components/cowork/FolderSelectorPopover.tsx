@@ -100,7 +100,7 @@ const DirectoryBrowser: React.FC<DirectoryBrowserProps> = ({ onSelect, onClose }
             value={pathInput}
             onChange={e => setPathInput(e.target.value)}
             onKeyDown={handlePathInputKeyDown}
-            placeholder="输入路径后回车跳转"
+            placeholder="输入位置后回车打开"
             className="w-full px-3 py-1.5 text-xs rounded-lg border dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-claude-bg dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-1 focus:ring-claude-accent/50 font-mono"
           />
         </div>

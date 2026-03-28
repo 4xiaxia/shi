@@ -667,13 +667,13 @@ const SkillsManager: React.FC = () => {
       {showRuntimeHint && (
         <div className="rounded-2xl border border-sky-200/80 dark:border-sky-800/70 bg-sky-50/90 dark:bg-sky-950/20 px-4 py-3 space-y-1.5">
           <p className="text-sm leading-6 text-sky-700 dark:text-sky-200">
-            {'这里直接读取角色能力真相视图。真实运行目录以应用数据目录下的 SKILLs、roles/<role>/skills.json 与 role-capabilities.json 为准。'}
+            {'这里看到的是角色当前真正能用到的技能结果，不是随便展示一个列表。系统会按角色绑定和运行配置，筛出实际会进对话的那部分。'}
           </p>
           <div className="space-y-1 text-xs leading-5 text-sky-600 dark:text-sky-300/90">
             <div>{RUNTIME_FLOW_TAGS.skillFile.line}</div>
             <div>{RUNTIME_FLOW_TAGS.roleIndex.line}</div>
-            <div>{'前端默认只展示当前角色真正可用的结果：角色绑定 + 全局可用。'}</div>
-            <div>{'注意：内置 Memory / Playwright 这类工具服务器不在这里，它们属于 MCP。'}</div>
+            <div>{'这里默认只显示当前角色真正会带上的技能：角色绑定 + 全部角色通用。'}</div>
+            <div>{'像 Memory、Playwright 这类工具接入不在这里看，它们归到 MCP。'}</div>
           </div>
         </div>
       )}

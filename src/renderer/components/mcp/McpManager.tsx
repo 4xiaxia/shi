@@ -44,6 +44,13 @@ const TRANSPORT_BADGE_COLORS: Record<string, string> = {
   http: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
 };
 
+const formatMcpScopeLabel = (scope: string): string => {
+  if (scope === 'all') {
+    return '全部角色';
+  }
+  return AGENT_ROLE_SHORT_LABELS[scope as keyof typeof AGENT_ROLE_SHORT_LABELS] || '当前角色';
+};
+
 type McpTab = 'supported' | 'templates';
 
 const McpManager: React.FC = () => {
@@ -347,7 +354,7 @@ const McpManager: React.FC = () => {
           className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200/80 dark:border-emerald-800/70 bg-emerald-50/90 dark:bg-emerald-950/20 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-200 transition-colors"
         >
           <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-          {`运行态 ${AGENT_ROLE_SHORT_LABELS[selectedRole]} · ${runtimeMcpTools.length}`}
+          {`当前接入 ${AGENT_ROLE_SHORT_LABELS[selectedRole]} · ${runtimeMcpTools.length}`}
         </button>
       </div>
 
@@ -383,11 +390,11 @@ const McpManager: React.FC = () => {
             ))}
           </div>
           <div className="text-xs leading-5 text-emerald-700/90 dark:text-emerald-200/90">
-            {`当前角色 ${AGENT_ROLE_SHORT_LABELS[selectedRole]} 实际注入 MCP：${runtimeMcpTools.length} 个。`}
+            {`当前角色 ${AGENT_ROLE_SHORT_LABELS[selectedRole]} 现在会带上 ${runtimeMcpTools.length} 个 MCP 工具。`}
           </div>
           {hiddenServerCount > 0 && (
             <div className="text-[11px] leading-5 text-emerald-700/80 dark:text-emerald-200/80">
-              {`已自动收起 ${hiddenServerCount} 条尚未进入当前运行态的配置。`}
+              {`另有 ${hiddenServerCount} 条配置暂时还没对当前角色生效，已先收起。`}
             </div>
           )}
           {runtimeMcpTools.length > 0 && (
@@ -397,7 +404,7 @@ const McpManager: React.FC = () => {
                   key={`${selectedRole}:${tool.id}`}
                   className="rounded-full bg-white/80 dark:bg-emerald-900/30 px-2 py-1 text-[11px] text-emerald-700 dark:text-emerald-200"
                 >
-                  {`${tool.name} · ${tool.scope === 'all' ? '公共' : tool.scope}`}
+                  {`${tool.name} · ${formatMcpScopeLabel(tool.scope)}`}
                 </span>
               ))}
             </div>
