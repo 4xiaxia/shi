@@ -260,6 +260,46 @@ const IMSettings: React.FC = () => {
     dispatch(setWechatBotConfig({ [field]: value }));
   };
 
+  const persistWechatBotConfig = async (
+    nextWechatBotConfig: typeof config.wechatbot,
+    options?: {
+      restartIfEnabled?: boolean;
+      successMessage?: string;
+    }
+  ) => {
+    await imService.updateConfig({ wechatbot: nextWechatBotConfig });
+
+    const shouldRefreshBridge = options?.restartIfEnabled && nextWechatBotConfig.enabled;
+    if (!shouldRefreshBridge) {
+      if (options?.successMessage) {
+        showGlobalToast(options.successMessage);
+      }
+      return;
+    }
+
+    const bridgeReady = Boolean(
+      nextWechatBotConfig.botAccountId
+      && nextWechatBotConfig.botToken
+      && nextWechatBotConfig.agentRoleKey
+    );
+
+    if (!bridgeReady) {
+      await imService.stopGateway('wechatbot');
+      await imService.refreshRuntimeStatus('wechatbot');
+      showGlobalToast('个人微信桥接已保存；当前绑定还不完整，桥接已先停止。');
+      return;
+    }
+
+    await imService.stopGateway('wechatbot');
+    const started = await imService.startGateway('wechatbot');
+    if (!started) {
+      showGlobalToast('个人微信配置已保存，但桥接重载失败，请检查当前绑定。');
+      return;
+    }
+
+    showGlobalToast(options?.successMessage || '个人微信桥接已按最新绑定刷新');
+  };
+
   const handleImaChange = (field: 'clientId' | 'apiKey', value: string) => {
     dispatch(setImaConfig({ [field]: value }));
   };
@@ -337,9 +377,10 @@ const IMSettings: React.FC = () => {
             botToken: login.result.botToken,
           };
           dispatch(setWechatBotConfig(nextWechatBotConfig));
-          await imService.updateConfig({ wechatbot: nextWechatBotConfig });
-          await imService.refreshRuntimeStatus('wechatbot');
-          showGlobalToast('个人微信授权成功，Bot 信息已回填');
+          await persistWechatBotConfig(nextWechatBotConfig, {
+            restartIfEnabled: true,
+            successMessage: '个人微信授权成功，Bot 信息已回填',
+          });
           return;
         }
 
@@ -364,6 +405,15 @@ const IMSettings: React.FC = () => {
   // the NIM toggle is ON and credential fields have changed.
   const handleSaveConfig = async () => {
     if (!configLoaded) return;
+
+    if (activePlatform === 'wechatbot') {
+      await persistWechatBotConfig(config.wechatbot, {
+        restartIfEnabled: true,
+        successMessage: '设置已保存',
+      });
+      return;
+    }
+
     await imService.updateConfig({ [activePlatform]: config[activePlatform] });
 
     showGlobalToast('设置已保存');
@@ -1167,8 +1217,17 @@ const IMSettings: React.FC = () => {
                 <select
                   value={config.wechatbot.agentRoleKey}
                   onChange={(e) => {
-                    handleWechatBotChange('agentRoleKey', e.target.value);
-                    void imService.updateConfig({ wechatbot: { ...config.wechatbot, agentRoleKey: e.target.value } });
+                    const nextWechatBotConfig = {
+                      ...config.wechatbot,
+                      agentRoleKey: e.target.value,
+                    };
+                    dispatch(setWechatBotConfig(nextWechatBotConfig));
+                    void persistWechatBotConfig(nextWechatBotConfig, {
+                      restartIfEnabled: true,
+                      successMessage: e.target.value
+                        ? '绑定角色已更新；个人微信后续消息会按新角色进入主线。'
+                        : '绑定角色已清空；个人微信桥接已等待重新确认。',
+                    });
                   }}
                   className="block w-full rounded-lg dark:bg-claude-darkSurface/80 bg-claude-surface/80 dark:border-claude-darkBorder/60 border-claude-border/60 border focus:border-claude-accent focus:ring-1 focus:ring-claude-accent/30 dark:text-claude-darkText text-claude-text px-3 py-2 text-sm transition-colors"
                 >
@@ -1196,8 +1255,15 @@ const IMSettings: React.FC = () => {
                   }`}
                   onClick={() => {
                     const nextValue = !config.wechatbot.syncBotReplies;
-                    handleWechatBotChange('syncBotReplies', nextValue);
-                    void imService.updateConfig({ wechatbot: { ...config.wechatbot, syncBotReplies: nextValue } });
+                    const nextWechatBotConfig = {
+                      ...config.wechatbot,
+                      syncBotReplies: nextValue,
+                    };
+                    dispatch(setWechatBotConfig(nextWechatBotConfig));
+                    void persistWechatBotConfig(nextWechatBotConfig, {
+                      restartIfEnabled: true,
+                      successMessage: nextValue ? '已开启 Bot 回复同步' : '已关闭 Bot 回复同步',
+                    });
                   }}
                 >
                   <div

@@ -91,6 +91,9 @@ function inferSharedThreadChannelHint(session: Pick<CoworkSession, 'systemPrompt
     if (scope.startsWith('im:dingtalk:chat:')) {
       return 'dingtalk';
     }
+    if (scope.startsWith('im:wechatbot:user:')) {
+      return 'wechatbot';
+    }
     return 'external';
   }
 
@@ -105,6 +108,9 @@ function inferSharedThreadChannelHint(session: Pick<CoworkSession, 'systemPrompt
   }
   if (scope.startsWith('im:dingtalk:chat:')) {
     return 'dingtalk';
+  }
+  if (scope.startsWith('im:wechatbot:user:')) {
+    return 'wechatbot';
   }
 
   const title = session.title?.trim() ?? '';
